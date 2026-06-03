@@ -182,7 +182,9 @@ dependencies = [
  "anyhow",
  "clap",
  "nix-core",
+ "pretty_assertions",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

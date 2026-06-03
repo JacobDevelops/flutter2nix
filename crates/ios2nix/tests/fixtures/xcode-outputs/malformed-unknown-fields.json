@@ -1,0 +1,8 @@
+{
+  "version": "14.3",
+  "architectures": ["arm64", "x86_64"],
+  "frameworks": [],
+  "codesign_identity": null,
+  "unknown_future_field": "should be ignored for forward compatibility",
+  "another_unknown": 42
+}

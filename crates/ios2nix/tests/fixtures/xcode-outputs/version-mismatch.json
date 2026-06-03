@@ -1,0 +1,6 @@
+{
+  "version": "99.0",
+  "architectures": ["arm64"],
+  "frameworks": [],
+  "codesign_identity": null
+}

@@ -1,0 +1,15 @@
+PODS:
+  - Flutter (1.0.0)
+  - firebase_core (10.0.0)
+
+DEPENDENCIES:
+  - Flutter
+  - firebase_core
+
+SPEC CHECKSUMS:
+  Flutter: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  firebase_core: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+PODFILE CHECKSUM: 1111111111111111111111111111111111111111
+
+COCOAPODS: 1.15.0

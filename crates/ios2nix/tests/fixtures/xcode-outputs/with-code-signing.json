@@ -1,0 +1,6 @@
+{
+  "version": "14.3",
+  "architectures": ["arm64"],
+  "frameworks": [],
+  "codesign_identity": "Apple Distribution: Example Corp (TEAM123456)"
+}

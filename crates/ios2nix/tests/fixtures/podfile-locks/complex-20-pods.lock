@@ -1,0 +1,72 @@
+PODS:
+  - Flutter (1.0.0)
+  - firebase_core (10.0.0)
+  - firebase_auth (10.0.0):
+    - firebase_core
+  - firebase_firestore (4.0.0):
+    - firebase_core
+  - firebase_storage (11.0.0):
+    - firebase_core
+  - google_sign_in_ios (6.0.0)
+  - path_provider_foundation (2.3.0)
+  - shared_preferences_foundation (2.3.0)
+  - image_picker_ios (0.8.9)
+  - camera_avfoundation (0.9.15)
+  - video_player_avfoundation (2.3.0)
+  - connectivity_plus (1.2.0)
+  - url_launcher_ios (6.2.0)
+  - device_info_plus (9.1.0)
+  - package_info_plus (7.0.0)
+  - permission_handler_apple (9.2.0)
+  - local_auth_darwin (2.2.0)
+  - sqflite_darwin (2.3.0)
+  - file_picker (6.1.0)
+  - in_app_purchase_storekit (0.3.6)
+
+DEPENDENCIES:
+  - Flutter
+  - firebase_core
+  - firebase_auth
+  - firebase_firestore
+  - firebase_storage
+  - google_sign_in_ios
+  - path_provider_foundation
+  - shared_preferences_foundation
+  - image_picker_ios
+  - camera_avfoundation
+  - video_player_avfoundation
+  - connectivity_plus
+  - url_launcher_ios
+  - device_info_plus
+  - package_info_plus
+  - permission_handler_apple
+  - local_auth_darwin
+  - sqflite_darwin
+  - file_picker
+  - in_app_purchase_storekit
+
+SPEC CHECKSUMS:
+  Flutter: deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef
+  firebase_core: cafebabe1234567890abcdefdeadbeefcafebabe1234567890abcdef12345678
+  firebase_auth: 1111111111111111111111111111111111111111111111111111111111111111
+  firebase_firestore: 2222222222222222222222222222222222222222222222222222222222222222
+  firebase_storage: 3333333333333333333333333333333333333333333333333333333333333333
+  google_sign_in_ios: 4444444444444444444444444444444444444444444444444444444444444444
+  path_provider_foundation: 5555555555555555555555555555555555555555555555555555555555555555
+  shared_preferences_foundation: 6666666666666666666666666666666666666666666666666666666666666666
+  image_picker_ios: 7777777777777777777777777777777777777777777777777777777777777777
+  camera_avfoundation: 8888888888888888888888888888888888888888888888888888888888888888
+  video_player_avfoundation: 9999999999999999999999999999999999999999999999999999999999999999
+  connectivity_plus: aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000
+  url_launcher_ios: bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111
+  device_info_plus: cccc2222cccc2222cccc2222cccc2222cccc2222cccc2222cccc2222cccc2222
+  package_info_plus: dddd3333dddd3333dddd3333dddd3333dddd3333dddd3333dddd3333dddd3333
+  permission_handler_apple: eeee4444eeee4444eeee4444eeee4444eeee4444eeee4444eeee4444eeee4444
+  local_auth_darwin: ffff5555ffff5555ffff5555ffff5555ffff5555ffff5555ffff5555ffff5555
+  sqflite_darwin: 0000666600006666000066660000666600006666000066660000666600006666
+  file_picker: 1111777711117777111177771111777711117777111177771111777711117777
+  in_app_purchase_storekit: 2222888822228888222288882222888822228888222288882222888822228888
+
+PODFILE CHECKSUM: ffffffffffffffffffffffffffffffffffffffff
+
+COCOAPODS: 1.15.0

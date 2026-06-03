@@ -14,3 +14,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 nix-core = { path = "../nix-core" }
 serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+pretty_assertions = "1"

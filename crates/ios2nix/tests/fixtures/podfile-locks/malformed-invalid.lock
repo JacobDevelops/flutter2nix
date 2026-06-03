@@ -1,0 +1,3 @@
+: this is deliberately invalid YAML
+  - [unmatched bracket
+  key: : double colon

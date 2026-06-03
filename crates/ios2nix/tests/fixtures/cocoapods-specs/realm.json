@@ -1,0 +1,11 @@
+{
+  "name": "Realm",
+  "version": "10.44.0",
+  "summary": "Realm is a mobile database stub",
+  "homepage": "https://realm.io",
+  "source": {
+    "http": "https://github.com/realm/realm-swift/releases/download/v10.44.0/Realm.xcframework.zip"
+  },
+  "platforms": { "ios": "13.0" },
+  "dependencies": {}
+}

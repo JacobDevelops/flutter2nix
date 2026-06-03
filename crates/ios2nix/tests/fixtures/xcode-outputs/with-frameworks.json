@@ -1,0 +1,6 @@
+{
+  "version": "14.3",
+  "architectures": ["arm64"],
+  "frameworks": ["Flutter", "FirebaseCore", "GoogleUtilities"],
+  "codesign_identity": null
+}

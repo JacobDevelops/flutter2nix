@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "XcodeBuildOutput",
+  "description": "Schema for ios2nix Xcode build output JSON (Xcode 15.3)",
+  "type": "object",
+  "required": ["version", "architectures"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Xcode version string (e.g. '15.3')"
+    },
+    "architectures": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of target architectures (e.g. ['arm64', 'x86_64'])"
+    },
+    "frameworks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of embedded framework names"
+    },
+    "codesign_identity": {
+      "type": ["string", "null"],
+      "description": "Code signing identity DN, or null if unsigned"
+    }
+  }
+}
