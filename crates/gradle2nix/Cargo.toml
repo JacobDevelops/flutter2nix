@@ -1,0 +1,16 @@
+[package]
+name = "gradle2nix"
+version.workspace = true
+edition.workspace = true
+description = "Gradle/Maven dependency materialiser for Nix via Gradle Tooling API"
+license = "MIT"
+
+[[bin]]
+name = "gradle2nix"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+nix-core = { path = "../nix-core" }
+serde_json = "1"

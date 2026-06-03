@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/nix-core",
+  "crates/gradle2nix",
+  "crates/ios2nix",
+  "crates/flutter2nix",
+  "tools/fnx",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"

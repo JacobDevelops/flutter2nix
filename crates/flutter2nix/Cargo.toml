@@ -1,0 +1,16 @@
+[package]
+name = "flutter2nix"
+version.workspace = true
+edition.workspace = true
+description = "Flutter integration layer composing gradle2nix + ios2nix with a unified lockfile"
+license = "MIT"
+
+[[bin]]
+name = "flutter2nix"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+nix-core = { path = "../nix-core" }
+serde_json = "1"

@@ -1,0 +1,49 @@
+{
+  "file_scan_exclusions": [
+    "**/.git",
+    "**/.svn",
+    "**/.hg",
+    "**/.jj",
+    "**/CVS",
+    "**/.DS_Store",
+    "**/Thumbs.db",
+    "**/.classpath",
+    "**/.settings",
+    "**/result",
+    "**/result-*",
+  ],
+  "lsp": {
+    "nixd": {
+      "binary": {
+        "path": "/nix/var/nix/profiles/default/bin/nix",
+        "arguments": ["develop", ".", "--command", "nixd"],
+      },
+    },
+    "nil": {
+      "binary": {
+        "path": "/nix/var/nix/profiles/default/bin/nix",
+        "arguments": ["develop", ".", "--command", "nil"],
+      },
+    },
+    "dart": {
+      "binary": {
+        "path": "/nix/var/nix/profiles/default/bin/nix",
+        "arguments": [
+          "develop",
+          ".#mobile",
+          "--command",
+          "dart",
+          "language-server",
+        ],
+      },
+    },
+  },
+  "languages": {
+    "Nix": {
+      "language_servers": ["nixd", "..."],
+    },
+    "Dart": {
+      "language_servers": ["dart", "..."],
+    },
+  },
+}

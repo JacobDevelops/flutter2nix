@@ -1,0 +1,14 @@
+[package]
+name = "fnx"
+version.workspace = true
+edition.workspace = true
+description = "flutter2nix developer CLI — run checks, builds, tests, and lockfile operations"
+license = "MIT"
+
+[[bin]]
+name = "fnx"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
