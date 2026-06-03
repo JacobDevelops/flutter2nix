@@ -1,0 +1,15 @@
+{
+  "version": "8.4.0",
+  "buildId": "xyz-forward-compat-field",
+  "artifacts": [
+    {
+      "group": "com.google.guava",
+      "artifact": "guava",
+      "version": "31.1-jre",
+      "classifier": null,
+      "extension": "jar",
+      "scope": "compile"
+    }
+  ],
+  "configurations": ["compile"]
+}

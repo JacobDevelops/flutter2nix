@@ -1,0 +1,10 @@
+{
+  "version": "1",
+  "nodes": [
+    {
+      "name": "com.google.guava:guava:31.1-jre",
+      "version": "31.1-jre",
+      "url": "https://repo.maven.apache.org/maven2/com/google/guava/guava/31.1-jre/guava-31.1-jre.jar"
+    }
+  ]
+}

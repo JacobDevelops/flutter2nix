@@ -1,0 +1,1 @@
+io.netty:netty-codec-http:4.1.100.Final

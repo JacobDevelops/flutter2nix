@@ -1,0 +1,22 @@
+{
+  "version": "8.4.0",
+  "artifacts": [
+    {
+      "group": "com.google.guava",
+      "artifact": "guava",
+      "version": "31.1-jre",
+      "classifier": null,
+      "extension": "jar",
+      "scope": "compile"
+    },
+    {
+      "group": "junit",
+      "artifact": "junit",
+      "version": "4.13.2",
+      "classifier": null,
+      "extension": "jar",
+      "scope": "test"
+    }
+  ],
+  "configurations": ["compile", "test"]
+}

@@ -1,0 +1,26 @@
+{
+  "description": "Gradle Tooling API output schema (gradle2nix Phase 1)",
+  "gradle_version_pin": "8.4.0",
+  "recorded_at": "2026-06-03",
+  "tapi_versions_supported": ["7.4.0", "7.6.0", "8.0.0", "8.4.0"],
+  "schema": {
+    "version": "string — semver or gradle version format (e.g. '8.4.0')",
+    "artifacts": [
+      {
+        "group": "string — reverse domain notation (e.g. 'com.google.guava')",
+        "artifact": "string — artifact ID (e.g. 'guava')",
+        "version": "string — semver or gradle version (e.g. '31.1-jre')",
+        "classifier": "string or null — e.g. 'sources', 'javadoc', null for main artifact",
+        "extension": "string — file extension (e.g. 'jar', 'aar', 'pom')",
+        "scope": "string — dependency scope (e.g. 'compile', 'test', 'runtime', 'provided')"
+      }
+    ],
+    "configurations": ["array of Gradle configuration names (e.g. 'compile', 'test')"]
+  },
+  "notes": [
+    "All fixture files are recorded against Gradle 8.4.0.",
+    "If Gradle is upgraded, fixtures must be re-recorded via scripts/record-tapi-fixtures.sh (Phase 2).",
+    "The 'classifier' field is null (not absent) when no classifier applies.",
+    "Unknown extra fields at the top level should be ignored (forward compatibility)."
+  ]
+}

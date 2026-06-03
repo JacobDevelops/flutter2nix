@@ -1,0 +1,30 @@
+{
+  "version": "8.4.0",
+  "artifacts": [
+    {
+      "group": "com.google.guava",
+      "artifact": "guava",
+      "version": "31.1-jre",
+      "classifier": null,
+      "extension": "jar",
+      "scope": "compile"
+    },
+    {
+      "group": "com.google.guava",
+      "artifact": "guava",
+      "version": "31.1-jre",
+      "classifier": "sources",
+      "extension": "jar",
+      "scope": "compile"
+    },
+    {
+      "group": "org.ow2.asm",
+      "artifact": "asm",
+      "version": "9.5",
+      "classifier": null,
+      "extension": "jar",
+      "scope": "compile"
+    }
+  ],
+  "configurations": ["compile"]
+}

@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 mod cli;
 mod lockfile;
@@ -24,13 +25,34 @@ enum Command {
     Generate,
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     match args.command {
-        Some(Command::Lock) => cli::lock::run(),
-        Some(Command::Check) => cli::check::run(),
-        Some(Command::Generate) => cli::generate::run(),
+        Some(Command::Lock) => {
+            cli::lock::run(cli::lock::LockCommand {
+                gradle_dir: PathBuf::from("."),
+                output: None,
+                repositories: None,
+                timeout_secs: 60,
+            })
+            .await
+        }
+        Some(Command::Check) => {
+            cli::check::run(cli::check::CheckCommand {
+                gradle_dir: PathBuf::from("."),
+                lockfile: None,
+                repositories: None,
+                timeout_secs: 60,
+            })
+            .await
+        }
+        Some(Command::Generate) => cli::generate::run(cli::generate::GenerateCommand {
+            lockfile: None,
+            output: None,
+            format: cli::generate::NixFormat::Inline,
+        }),
         None => {
             println!("gradle2nix: use --help for available subcommands");
             Ok(())
