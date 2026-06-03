@@ -46,9 +46,5 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn test_main_entrypoint_ok() {
-        todo!("Phase 1: stub — expect: main() returns Ok(()) when called with valid subcommand args")
-    }
-}
+#[path = "main_tests.rs"]
+mod tests;
