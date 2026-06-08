@@ -1,0 +1,27 @@
+{
+  "version": "8.4.0",
+  "configurations": ["implementation", "testImplementation", "buildscript"],
+  "artifacts": [
+    {
+      "group": "com.google.guava",
+      "artifact": "guava",
+      "version": "31.1-jre",
+      "extension": "jar",
+      "scope": "implementation"
+    },
+    {
+      "group": "junit",
+      "artifact": "junit",
+      "version": "4.13.2",
+      "extension": "jar",
+      "scope": "testImplementation"
+    },
+    {
+      "group": "org.apache.commons",
+      "artifact": "commons-lang3",
+      "version": "3.13.0",
+      "extension": "jar",
+      "scope": "implementation"
+    }
+  ]
+}

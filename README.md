@@ -27,14 +27,44 @@ fnx test         # cargo test --workspace
 fnx fmt          # cargo fmt --all
 ```
 
-## Usage
+## gradle2nix
+
+Generate a reproducible lockfile for any Gradle project and consume it in Nix:
 
 ```bash
-# Generate lockfile for a Flutter Android project
+# Install
+nix profile install github:JacobDevelops/flutter2nix#gradle2nix
+
+# Generate lockfile for your Android/Gradle project
 gradle2nix lock --project-dir ./android
 
-# Build in Nix sandbox
+# Verify lockfile is current (use in CI)
+gradle2nix check --project-dir ./android
+
+# Build gradle2nix itself via Nix
 nix build .#gradle2nix
 ```
+
+See [docs/gradle2nix-standalone.md](docs/gradle2nix-standalone.md) for the full guide —
+installation options, CLI reference, Nix flake integration, and troubleshooting.
+
+### Use in your flake
+
+```nix
+{
+  inputs.flutter2nix.url = "github:JacobDevelops/flutter2nix";
+
+  outputs = { self, flutter2nix, ... }: {
+    packages.x86_64-linux.myApp = flutter2nix.lib.buildAndroidApp {
+      name = "my-app";
+      projectDir = ./android;
+      lockFile = ./android/gradle2nix.lock;
+    };
+  };
+}
+```
+
+> **Note:** Library functions (`buildGradleProject`, `buildAndroidApp`) are Phase 2 stubs
+> that return attribute sets for integration now. Full build orchestration ships in Phase 5.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and [docs/](docs/) for detailed guides.

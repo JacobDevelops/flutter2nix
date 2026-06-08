@@ -1,0 +1,30 @@
+{
+  "android": {
+    "nodes": [
+      {
+        "name": "androidx.loader:loader:1.0.0",
+        "version": "1.0.0",
+        "url": "https://dl.google.com/dl/android/maven2/androidx/loader/loader/1.0.0/loader-1.0.0.aar",
+        "sha256": "11f735cb3b55c458d470bed9e25254375b518b4b1bad6926783a7026db0f5025"
+      },
+      {
+        "name": "com.google.android.play:app-update-ktx:2.1.0",
+        "version": "2.1.0",
+        "url": "https://dl.google.com/dl/android/maven2/com/google/android/play/app-update-ktx/2.1.0/app-update-ktx-2.1.0.aar",
+        "sha256": "cb87bec6a740bf91f3ee45b57c9853a0a77887116a6cabfba29a2c46f6679244"
+      },
+      {
+        "name": "androidx.fragment:fragment:1.7.1",
+        "version": "1.7.1",
+        "url": "https://dl.google.com/dl/android/maven2/androidx/fragment/fragment/1.7.1/fragment-1.7.1.aar",
+        "sha256": "7ddebe9d830a04963733dcb340cab4bac1e69dfca797a6d59aa7bc56282150af"
+      },
+      {
+        "name": "com.google.firebase:firebase-annotations:16.2.0",
+        "version": "16.2.0",
+        "url": "https://dl.google.com/dl/android/maven2/com/google/firebase/firebase-annotations/16.2.0/firebase-annotations-16.2.0.jar",
+        "sha256": "46f6d5dfdd2ccf3c40de897a14bd9779314c3319f44bfd31e7e0a20d935a5e3e"
+      }
+    ]
+  }
+}

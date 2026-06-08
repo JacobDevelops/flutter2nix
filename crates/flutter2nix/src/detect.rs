@@ -1,4 +1,9 @@
-/// Stub: Detect a Flutter project by checking for pubspec.yaml.
-pub fn detect_flutter_project() -> anyhow::Result<bool> {
-    Ok(false)
+use std::path::Path;
+
+pub fn detect_flutter_project(project_dir: &Path) -> bool {
+    project_dir.join("pubspec.yaml").exists()
+}
+
+pub fn detect_android(project_dir: &Path) -> bool {
+    project_dir.join("android").is_dir()
 }

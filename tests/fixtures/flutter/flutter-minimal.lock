@@ -1,0 +1,12 @@
+{
+  "android": {
+    "nodes": [
+      {
+        "name": "io.flutter:flutter_embedding_release:1.0.0-425cfb54d01a9472b3e81d9e76fd63a4a44cfbcb",
+        "version": "1.0.0-425cfb54d01a9472b3e81d9e76fd63a4a44cfbcb",
+        "url": "https://storage.googleapis.com/download.flutter.io/io/flutter/flutter_embedding_release/1.0.0-425cfb54d01a9472b3e81d9e76fd63a4a44cfbcb/flutter_embedding_release-1.0.0-425cfb54d01a9472b3e81d9e76fd63a4a44cfbcb.jar",
+        "sha256": "9e715dc1a4cb3d0bfa885fa27f464d8dbbb442be6f45c998b1f66a72f3f4558d"
+      }
+    ]
+  }
+}

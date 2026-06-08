@@ -4,6 +4,13 @@ version.workspace = true
 edition.workspace = true
 description = "Gradle/Maven dependency materialiser for Nix via Gradle Tooling API"
 license = "MIT"
+repository = "https://github.com/JacobDevelops/flutter2nix"
+homepage = "https://github.com/JacobDevelops/flutter2nix/tree/main/crates/gradle2nix"
+keywords = ["gradle", "maven", "nix", "dependency", "android"]
+
+[lib]
+name = "gradle2nix"
+path = "src/lib.rs"
 
 [[bin]]
 name = "gradle2nix"
@@ -12,10 +19,18 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+log = "0.4"
 nix-core = { path = "../nix-core" }
+regex = "1"
+reqwest = { version = "0.11", features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
 tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
+mockito = "0.31"
 pretty_assertions = "1"
+tempfile = "3"

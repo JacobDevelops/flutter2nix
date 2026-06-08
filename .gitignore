@@ -20,7 +20,14 @@ result-*
 
 # Gradle
 tapi-shim/.gradle/
-tapi-shim/build/
+# Use ** (not trailing /) so the negation below can un-ignore the pre-built JAR.
+# Git cannot negate a file inside an ignored directory, but can inside an ignored glob.
+tapi-shim/build/**
+# Pre-built JAR must be git-tracked so Nix flake can reference it as a path input.
+# Phase 3 will replace this with a Kotlin-in-Nix build; until then the JAR is vendored.
+!tapi-shim/build/libs/
+!tapi-shim/build/libs/tapi-shim.jar
+**/fixtures/**/.gradle
 
 # OMC
 .omc/notepad.md

@@ -1,0 +1,30 @@
+{
+  "version": "8.9.0",
+  "artifacts": [
+    {
+      "group": "androidx.core",
+      "artifact": "core-ktx",
+      "version": "1.9.0",
+      "classifier": null,
+      "extension": "aar",
+      "scope": "releaseRuntimeClasspath"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "artifact": "kotlin-stdlib",
+      "version": "1.8.22",
+      "classifier": null,
+      "extension": "jar",
+      "scope": "releaseRuntimeClasspath"
+    },
+    {
+      "group": "io.flutter",
+      "artifact": "flutter_embedding_debug",
+      "version": "1.0.0-abc123",
+      "classifier": null,
+      "extension": "jar",
+      "scope": "debugRuntimeClasspath"
+    }
+  ],
+  "configurations": ["releaseRuntimeClasspath", "debugRuntimeClasspath"]
+}

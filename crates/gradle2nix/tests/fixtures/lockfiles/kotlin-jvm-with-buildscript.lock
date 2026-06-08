@@ -1,0 +1,23 @@
+{
+  "version": "1",
+  "nodes": [
+    {
+      "name": "com.google.guava:guava:31.1-jre",
+      "version": "31.1-jre",
+      "url": "https://repo.maven.apache.org/maven2/com/google/guava/guava/31.1-jre/guava-31.1-jre.jar",
+      "sha256": "c4b87ce48bf565fce5dfc5db0ce5f13f69e58e6b0f7b960e42ab2e42e7cef83c"
+    },
+    {
+      "name": "junit:junit:4.13.2",
+      "version": "4.13.2",
+      "url": "https://repo.maven.apache.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar",
+      "sha256": "8e495b634469d64fb8acfa3495a065cdc1e19432e3508bfc5cc1e73eaebc19b0"
+    },
+    {
+      "name": "org.apache.commons:commons-lang3:3.13.0",
+      "version": "3.13.0",
+      "url": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-lang3/3.13.0/commons-lang3-3.13.0.jar",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ]
+}

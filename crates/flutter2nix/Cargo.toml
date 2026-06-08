@@ -5,6 +5,10 @@ edition.workspace = true
 description = "Flutter integration layer composing gradle2nix + ios2nix with a unified lockfile"
 license = "MIT"
 
+[lib]
+name = "flutter2nix"
+path = "src/lib.rs"
+
 [[bin]]
 name = "flutter2nix"
 path = "src/main.rs"
@@ -12,5 +16,12 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+gradle2nix = { path = "../gradle2nix" }
 nix-core = { path = "../nix-core" }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

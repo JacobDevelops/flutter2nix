@@ -2,11 +2,13 @@
 use super::*;
 
 #[test]
+#[ignore = "TODO: ios2nix not yet implemented"]
 fn test_archive_create_xcarchive() {
     todo!("Phase 1: stub — input: successful build output, expect: Ok(.xcarchive created at output path)")
 }
 
 #[test]
+#[ignore = "TODO: ios2nix not yet implemented"]
 fn test_archive_verify_structure() {
     todo!("Phase 1: stub — input: .xcarchive path, expect: contains Products/Applications/<app>.app and Info.plist")
 }

@@ -16,14 +16,43 @@ cargo clippy       # lint
 nix flake check    # verify Nix outputs
 ```
 
+## Building the tapi-shim JAR (required for gradle2nix)
+
+gradle2nix embeds the tapi-shim JAR at compile time via `include_bytes!`. You must build
+the JAR before running `cargo build -p gradle2nix`:
+
+```bash
+cd tapi-shim && gradle build && cd ..
+cargo build -p gradle2nix
+```
+
+### Updating the JAR hash in flake.nix
+
+When the tapi-shim Kotlin source changes, rebuild the JAR and update the hash in `flake.nix`:
+
+```bash
+cd tapi-shim && gradle clean build && cd ..
+nix hash file tapi-shim/build/libs/tapi-shim.jar
+# Copy the sha256-... value and update outputHash in flake.nix:
+#   tapi-shim-jar = pkgs.runCommand "tapi-shim-jar" {
+#     outputHash = "sha256-<new-hash-here>";
+#     ...
+```
+
+Then verify the updated flake builds correctly:
+
+```bash
+nix build .#tapi-shim-jar
+nix build .#gradle2nix
+```
+
 ## Repository Layout
 
 - `crates/` — Rust workspace members (nix-core, gradle2nix, ios2nix, flutter2nix)
-- `tools/fnx/` — `fnx` dev CLI for running common repo tasks
 - `tapi-shim/` — Kotlin/Gradle project providing the TAPI JAR for gradle2nix
-- `nix/` — Nix library functions (buildAndroidApp, buildIOSApp, buildFlutterApp)
-- `tests/fixtures/` — Test fixture projects (gradle/, flutter/)
+- `nix/` — Nix library functions (buildGradleProject, buildAndroidApp, buildIOSApp, buildFlutterApp)
 - `docs/` — User-facing documentation
+- `tests/fixtures/` — Test fixture projects (gradle/, flutter/)
 
 ## Development Workflow
 
@@ -45,5 +74,5 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 ## Testing
 
 - Unit tests: `cargo test -p <crate>`
-- e2e tests: land in Phase 1 (see PLAN.md)
+- e2e tests: land in Phase 1 (see `tests/` directory)
 - iOS tests: manual procedure documented in `docs/ios-testing.md`
