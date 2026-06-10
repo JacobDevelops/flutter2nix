@@ -82,6 +82,7 @@ async fn test_resolve_artifact_sha256_from_local_cache() {
         gradle_user_home: None,
         timeout_secs: 30,
         max_concurrency: 10,
+        resolve_cache: None,
     };
     let sha256 = resolve_artifact_sha256(&coord, &config).await.unwrap();
     assert_eq!(sha256, "c4b87ce48bf565fce5dfc5db0ce5f13f69e58e6b0f7b960e42ab2e42e7cef83c");
@@ -98,6 +99,7 @@ async fn test_resolve_artifact_sha256_not_found_404() {
         gradle_user_home: None,
         timeout_secs: 30,
         max_concurrency: 10,
+        resolve_cache: None,
     };
     let err = resolve_artifact_sha256(&coord, &config).await.unwrap_err();
     let msg = err.to_string();
@@ -116,6 +118,7 @@ async fn test_resolve_artifact_sha256_invalid_format_not_hex() {
         gradle_user_home: None,
         timeout_secs: 30,
         max_concurrency: 10,
+        resolve_cache: None,
     };
     let err = resolve_artifact_sha256(&coord, &config).await.unwrap_err();
     assert!(
@@ -136,6 +139,7 @@ async fn test_resolve_artifacts_batch() {
         gradle_user_home: None,
         timeout_secs: 30,
         max_concurrency: 10,
+        resolve_cache: None,
     };
     let results = resolve_artifacts_batch(&coords, &config).await.unwrap();
     assert_eq!(results.len(), 2);
@@ -166,8 +170,9 @@ fn test_error_messages_are_actionable() {
 fn test_maven_resolver_config_default() {
     let config = MavenResolverConfig::default();
     assert_eq!(
-        config.max_concurrency, 10,
-        "default max_concurrency should be 10 for parallel HTTP requests"
+        config.max_concurrency, 64,
+        "default max_concurrency should be 64 — requests are tiny CDN lookups and \
+         wall-clock scales nearly linearly with concurrency in this range"
     );
     assert_eq!(config.timeout_secs, 60, "default timeout should be 60 seconds");
     assert!(
@@ -184,6 +189,7 @@ fn test_maven_resolver_config_custom_concurrency() {
         gradle_user_home: None,
         timeout_secs: 30,
         max_concurrency: 20,
+        resolve_cache: None,
     };
     assert_eq!(config.max_concurrency, 20, "custom max_concurrency should be respected");
     assert_eq!(config.timeout_secs, 30, "custom timeout should be respected");
@@ -209,6 +215,7 @@ async fn test_resolve_artifact_sha256_http_200_ok() {
         gradle_user_home: None,
         timeout_secs: 10,
         max_concurrency: 10,
+        resolve_cache: None,
     };
 
     let result = resolve_artifact_sha256(&coord, &config).await.unwrap();
@@ -231,6 +238,7 @@ async fn test_resolve_artifact_sha256_http_404_all_repos_fail() {
         gradle_user_home: None,
         timeout_secs: 10,
         max_concurrency: 10,
+        resolve_cache: None,
     };
 
     let err = resolve_artifact_sha256(&coord, &config).await.unwrap_err();
@@ -258,6 +266,7 @@ async fn test_resolve_artifact_sha256_http_invalid_response_not_hex() {
         gradle_user_home: None,
         timeout_secs: 10,
         max_concurrency: 10,
+        resolve_cache: None,
     };
 
     let err = resolve_artifact_sha256(&coord, &config).await.unwrap_err();
@@ -297,6 +306,7 @@ async fn test_resolve_artifact_sha256_http_falls_back_to_second_repo() {
         gradle_user_home: None,
         timeout_secs: 10,
         max_concurrency: 10,
+        resolve_cache: None,
     };
 
     let result = resolve_artifact_sha256(&coord, &config).await.unwrap();
@@ -326,6 +336,7 @@ async fn test_resolve_artifact_sha256_http_timeout() {
         gradle_user_home: None,
         timeout_secs: 1,
         max_concurrency: 10,
+        resolve_cache: None,
     };
 
     let err = resolve_artifact_sha256(&coord, &config).await.unwrap_err();
@@ -364,6 +375,7 @@ async fn test_resolve_artifacts_batch_parallel_concurrent() {
         gradle_user_home: None,
         timeout_secs: 10,
         max_concurrency: 5,
+        resolve_cache: None,
     };
 
     let results = resolve_artifacts_batch(&coords, &config).await.unwrap();
@@ -400,6 +412,7 @@ async fn test_resolve_artifacts_batch_parallel_fail_fast() {
         gradle_user_home: None,
         timeout_secs: 10,
         max_concurrency: 10,
+        resolve_cache: None,
     };
 
     let result = resolve_artifacts_batch(&[good, bad], &config).await;
@@ -440,6 +453,7 @@ async fn test_resolve_artifacts_batch_20_under_2s() {
         gradle_user_home: None,
         timeout_secs: 30,
         max_concurrency: 10,
+        resolve_cache: None,
     };
 
     let start = std::time::Instant::now();
@@ -478,4 +492,66 @@ fn discovery_gradle_home_explicit_home_wins() {
         config.discovery_gradle_home(),
         Some(PathBuf::from("/custom/gradle-home"))
     );
+}
+
+// ─── Repository routing (artifact_repo_url) ─────────────────────────────────
+
+fn routing_coord(group: &str, artifact: &str, version: &str, ext: &str) -> MavenCoordinate {
+    MavenCoordinate {
+        group: group.to_string(),
+        artifact: artifact.to_string(),
+        version: version.to_string(),
+        classifier: None,
+        extension: ext.to_string(),
+    }
+}
+
+#[test]
+fn firebase_exact_group_routes_to_google_maven() {
+    // Regression: "com.google.firebase" (no subpackage) was routed to Maven Central
+    // because starts_with("com.google.firebase.") failed on the exact group name.
+    let c = routing_coord("com.google.firebase", "firebase-annotations", "16.2.0", "jar");
+    assert_eq!(artifact_repo_url(&c), "https://dl.google.com/dl/android/maven2");
+}
+
+#[test]
+fn firebase_subpackage_routes_to_google_maven() {
+    let c = routing_coord("com.google.firebase.encoders", "firebase-encoders-json", "18.0.0", "jar");
+    assert_eq!(artifact_repo_url(&c), "https://dl.google.com/dl/android/maven2");
+}
+
+#[test]
+fn androidx_subpackage_routes_to_google_maven() {
+    let c = routing_coord("androidx.core", "core-ktx", "1.12.0", "aar");
+    assert_eq!(artifact_repo_url(&c), "https://dl.google.com/dl/android/maven2");
+}
+
+#[test]
+fn third_party_aar_routes_to_maven_central() {
+    // AARs from third-party groups are on Maven Central, not Google Maven.
+    let c = routing_coord("com.getkeepsafe.relinker", "relinker", "1.4.5", "aar");
+    assert_eq!(artifact_repo_url(&c), "https://repo.maven.apache.org/maven2");
+}
+
+#[test]
+fn kotlin_stdlib_routes_to_maven_central() {
+    let c = routing_coord("org.jetbrains.kotlin", "kotlin-stdlib", "1.9.0", "jar");
+    assert_eq!(artifact_repo_url(&c), "https://repo.maven.apache.org/maven2");
+}
+
+#[test]
+fn flutter_io_routes_to_flutter_storage() {
+    let c = routing_coord("io.flutter", "flutter_embedding_debug", "1.0.0-abc123", "jar");
+    assert_eq!(
+        artifact_repo_url(&c),
+        "https://storage.googleapis.com/download.flutter.io"
+    );
+}
+
+#[test]
+fn gradle_kotlin_dsl_routes_to_plugin_portal() {
+    // Gradle's own Kotlin DSL plugins are only published to the Gradle Plugin Portal;
+    // routing them to Maven Central would produce 404 URLs in the lockfile.
+    let c = routing_coord("org.gradle.kotlin", "gradle-kotlin-dsl-plugins", "5.2.0", "jar");
+    assert_eq!(artifact_repo_url(&c), "https://plugins.gradle.org/m2");
 }

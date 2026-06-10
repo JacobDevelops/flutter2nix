@@ -1,2 +1,4 @@
 {"timestamp":"2026-06-10T19:50:00+1000","commit":"4dc78211b206","host":"Jacob-PC x86_64","results":[{"target":"lock","cold_secs":236.1,"warm_secs":225.9},{"target":"gradle-build","cold_secs":21.1,"warm_secs":5.9},{"target":"flutter-build","cold_secs":39.5,"warm_secs":13.5}]}
 {"timestamp":"2026-06-10T19:53:46+1000","commit":"c28540126a05","host":"Jacob-PC x86_64","results":[{"target":"gradle-build","cold_secs":21.4,"warm_secs":5.8}]}
+{"timestamp":"2026-06-10T22:52:00+1000","commit":"5903aa3f3f20","host":"Jacob-PC x86_64","results":[{"target":"lock","cold_secs":153.3,"warm_secs":10.9}]}
+{"timestamp":"2026-06-10T23:38:10+1000","commit":"b6e92a760db7","host":"Jacob-PC x86_64","results":[{"target":"lock","cold_secs":164.4,"warm_secs":9.9}]}

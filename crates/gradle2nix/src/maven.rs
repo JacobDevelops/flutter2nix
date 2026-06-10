@@ -1,6 +1,101 @@
 use anyhow::Context;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
+
+use crate::resolve_cache::ResolveCache;
+
+/// Hard per-request ceiling. The CLI's --timeout-secs bounds the whole TAPI shim
+/// build (minutes are legitimate); a single HTTP request must never inherit that
+/// budget — one stale connection would stall the pipeline for the full duration.
+const MAX_HTTP_TIMEOUT_SECS: u64 = 60;
+
+/// Process-wide HTTP client. `reqwest::Client` holds a connection pool internally;
+/// constructing one per request defeats keep-alive and pays a fresh TCP + TLS
+/// handshake for every artifact. All Maven traffic goes to a handful of CDN hosts,
+/// so one pooled client turns thousands of handshakes into a few dozen.
+pub(crate) fn shared_http_client() -> reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .pool_max_idle_per_host(64)
+                // Drop pooled connections before CDN servers close their side
+                // (Cloudflare closes idle keep-alives well under a minute);
+                // reusing a half-closed socket hangs the request until timeout.
+                .pool_idle_timeout(Duration::from_secs(15))
+                .connect_timeout(Duration::from_secs(10))
+                // Whole-request backstop covering body reads, which per-call
+                // send() timeouts cannot reach.
+                .timeout(Duration::from_secs(MAX_HTTP_TIMEOUT_SECS))
+                .build()
+                .expect("building shared HTTP client")
+        })
+        .clone()
+}
+
+/// GET with one retry on transport errors (send failure or timeout). A stale
+/// pooled connection surfaces exactly once per socket — the retry runs on a
+/// fresh connection. HTTP status errors are returned as-is, never retried.
+async fn http_get(
+    client: &reqwest::Client,
+    url: &str,
+    timeout_secs: u64,
+) -> anyhow::Result<reqwest::Response> {
+    let per_try = Duration::from_secs(timeout_secs.min(MAX_HTTP_TIMEOUT_SECS));
+    let mut last: Option<anyhow::Error> = None;
+    for attempt in 0..2 {
+        match tokio::time::timeout(per_try, client.get(url).send()).await {
+            Ok(Ok(resp)) => return Ok(resp),
+            Ok(Err(e)) => {
+                log::debug!("HTTP attempt {} failed for {}: {}", attempt + 1, url, e);
+                last = Some(anyhow::Error::new(e).context(format!("HTTP request failed for {}", url)));
+            }
+            Err(_) => {
+                log::debug!("HTTP attempt {} timed out for {}", attempt + 1, url);
+                last = Some(anyhow::anyhow!(
+                    "HTTP request timeout after {}s for {}",
+                    per_try.as_secs(),
+                    url
+                ));
+            }
+        }
+    }
+    Err(last.expect("loop ran at least once"))
+}
+
+/// Route an artifact to the repository that actually hosts it. Used both for the
+/// download URL written into the lockfile and to order SHA-256 lookups so the
+/// hash always comes from the same repo as the lockfile URL (repos can serve
+/// byte-different copies of the same POM).
+pub fn artifact_repo_url(coord: &MavenCoordinate) -> String {
+    const FLUTTER_STORAGE: &str = "https://storage.googleapis.com/download.flutter.io";
+    const GOOGLE_MAVEN: &str = "https://dl.google.com/dl/android/maven2";
+    const MAVEN_CENTRAL: &str = "https://repo.maven.apache.org/maven2";
+    const GRADLE_PLUGIN_PORTAL: &str = "https://plugins.gradle.org/m2";
+
+    if coord.group.starts_with("io.flutter") {
+        return FLUTTER_STORAGE.to_string();
+    }
+
+    let is_group = |g: &str| coord.group == g || coord.group.starts_with(&format!("{}.", g));
+
+    // Gradle's own Kotlin DSL plugins are published to the Gradle Plugin Portal, not Maven Central.
+    if is_group("org.gradle.kotlin") {
+        return GRADLE_PLUGIN_PORTAL.to_string();
+    }
+
+    // Only Google's own namespaces belong on Google Maven. Third-party AARs
+    // (e.g. com.getkeepsafe.relinker) are published to Maven Central.
+    let is_google = is_group("androidx")
+        || is_group("com.android")
+        || is_group("com.google.android")
+        || is_group("com.google.firebase")
+        || is_group("com.google.gms")
+        || is_group("com.google.ar");
+
+    if is_google { GOOGLE_MAVEN.to_string() } else { MAVEN_CENTRAL.to_string() }
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct MavenCoordinate {
@@ -59,6 +154,9 @@ pub struct MavenResolverConfig {
     pub gradle_user_home: Option<PathBuf>,
     pub timeout_secs: u64,
     pub max_concurrency: usize,
+    /// Persistent cache of repository lookups (positive hashes + confirmed 404s).
+    /// None disables persistent caching (hermetic tests).
+    pub resolve_cache: Option<Arc<ResolveCache>>,
 }
 
 impl Default for MavenResolverConfig {
@@ -71,7 +169,10 @@ impl Default for MavenResolverConfig {
             local_cache_dir: None,
             gradle_user_home: None,
             timeout_secs: 60,
-            max_concurrency: 10,
+            // Requests are tiny (.sha256 sidecars, POMs) against large CDNs;
+            // wall-clock scales almost linearly with concurrency up to this range.
+            max_concurrency: 64,
+            resolve_cache: None,
         }
     }
 }
@@ -112,6 +213,7 @@ pub(crate) fn detect_gradle_user_home() -> Option<PathBuf> {
 fn find_sha256_in_gradle_cache(
     coord: &MavenCoordinate,
     gradle_user_home: &std::path::Path,
+    cache: Option<&ResolveCache>,
 ) -> anyhow::Result<Option<String>> {
     use sha2::Digest;
 
@@ -135,11 +237,17 @@ fn find_sha256_in_gradle_cache(
     {
         let jar_path = entry?.path().join(&filename);
         if jar_path.exists() {
+            if let Some(hex) = cache.and_then(|c| c.lookup_file_sha256(&jar_path)) {
+                return Ok(Some(hex));
+            }
             let bytes = std::fs::read(&jar_path)
                 .with_context(|| format!("reading cached JAR '{}'", jar_path.display()))?;
             let hash = sha2::Sha256::digest(&bytes);
             let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
             validate_sha256_hex(&hex, &coord.to_artifact_path())?;
+            if let Some(c) = cache {
+                c.store_file_sha256(&jar_path, &hex);
+            }
             return Ok(Some(hex));
         }
     }
@@ -158,20 +266,26 @@ async fn fetch_sha256_http(
     repo_url: &str,
     client: &reqwest::Client,
     timeout_secs: u64,
+    cache: Option<&ResolveCache>,
 ) -> anyhow::Result<String> {
     use sha2::Digest;
 
     let artifact_path = coord.to_artifact_path();
     let base = repo_url.trim_end_matches('/');
+    let artifact_url = format!("{}/{}", base, artifact_path);
+
+    // Persistent cache: Maven release URLs are immutable, so both a known hash
+    // and a confirmed 404 short-circuit the network entirely.
+    if let Some(entry) = cache.and_then(|c| c.lookup_sha256(&artifact_url)) {
+        return match entry {
+            Some(hex) => Ok(hex),
+            None => anyhow::bail!("HTTP 404 from {} (cached)", artifact_url),
+        };
+    }
+
     let sha256_url = format!("{}/{}.sha256", base, artifact_path);
 
-    let sha256_response = tokio::time::timeout(
-        Duration::from_secs(timeout_secs),
-        client.get(&sha256_url).send(),
-    )
-    .await
-    .with_context(|| format!("HTTP request timeout after {}s", timeout_secs))?
-    .with_context(|| format!("HTTP request failed for {}", sha256_url))?;
+    let sha256_response = http_get(client, &sha256_url, timeout_secs).await?;
 
     if sha256_response.status() == reqwest::StatusCode::OK {
         let text = sha256_response
@@ -180,20 +294,16 @@ async fn fetch_sha256_http(
             .with_context(|| format!("reading response body from {}", sha256_url))?;
         let hex = text.trim().to_string();
         validate_sha256_hex(&hex, &artifact_path)?;
+        if let Some(c) = cache {
+            c.store_sha256(&artifact_url, Some(hex.clone()));
+        }
         return Ok(hex);
     }
 
     if sha256_response.status() == reqwest::StatusCode::NOT_FOUND {
         // .sha256 sidecar not hosted (common for older Google Maven / Flutter storage artifacts).
         // Download the artifact itself and compute SHA-256 from the bytes.
-        let artifact_url = format!("{}/{}", base, artifact_path);
-        let art_response = tokio::time::timeout(
-            Duration::from_secs(timeout_secs),
-            client.get(&artifact_url).send(),
-        )
-        .await
-        .with_context(|| format!("HTTP request timeout downloading {}", artifact_url))?
-        .with_context(|| format!("HTTP request failed for {}", artifact_url))?;
+        let art_response = http_get(client, &artifact_url, timeout_secs).await?;
 
         if art_response.status() == reqwest::StatusCode::OK {
             let bytes = art_response
@@ -203,7 +313,19 @@ async fn fetch_sha256_http(
             let hash = sha2::Sha256::digest(&bytes);
             let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
             validate_sha256_hex(&hex, &artifact_path)?;
+            if let Some(c) = cache {
+                c.store_sha256(&artifact_url, Some(hex.clone()));
+            }
             return Ok(hex);
+        }
+
+        // Both the sidecar and the artifact 404'd: the coordinate definitively does
+        // not exist at this repo. Cache that so discovery never probes it again.
+        // Any other status (403/5xx) could be transient — never cached.
+        if art_response.status() == reqwest::StatusCode::NOT_FOUND {
+            if let Some(c) = cache {
+                c.store_sha256(&artifact_url, None);
+            }
         }
 
         anyhow::bail!(
@@ -223,25 +345,38 @@ async fn fetch_sha256_http(
 }
 
 /// Fetch a POM file as text from the first repository that has it.
+/// Hits the persistent cache first — POM text at a release URL never changes,
+/// and confirmed 404s are remembered so discovery doesn't re-probe them.
 pub async fn fetch_pom_content(
     coord: &MavenCoordinate,
     repo_urls: &[String],
-    client: &reqwest::Client,
-    timeout_secs: u64,
+    config: &MavenResolverConfig,
 ) -> Option<String> {
+    let client = shared_http_client();
+    let cache = config.resolve_cache.as_deref();
     let artifact_path = coord.to_artifact_path();
     let base_urls: Vec<String> = repo_urls.iter().map(|u| u.trim_end_matches('/').to_string()).collect();
     for base in &base_urls {
         let url = format!("{}/{}", base, artifact_path);
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            client.get(&url).send(),
-        )
-        .await;
-        if let Ok(Ok(resp)) = response {
-            if resp.status().is_success() {
+        if let Some(entry) = cache.and_then(|c| c.lookup_pom(&url)) {
+            match entry {
+                Some(text) => return Some(text),
+                None => continue, // cached 404 — try the next repo
+            }
+        }
+        let response = http_get(&client, &url, config.timeout_secs).await;
+        if let Ok(resp) = response {
+            let status = resp.status();
+            if status.is_success() {
                 if let Ok(text) = resp.text().await {
+                    if let Some(c) = cache {
+                        c.store_pom(&url, Some(text.clone()));
+                    }
                     return Some(text);
+                }
+            } else if status == reqwest::StatusCode::NOT_FOUND {
+                if let Some(c) = cache {
+                    c.store_pom(&url, None);
                 }
             }
         }
@@ -433,8 +568,16 @@ pub async fn resolve_artifact_sha256(
         }
     }
 
-    let client = reqwest::Client::new();
+    let client = shared_http_client();
+    let resolve_cache = config.resolve_cache.as_deref();
     let gradle_home = config.discovery_gradle_home();
+
+    // Try the repo that actually hosts this artifact first: the lockfile URL is
+    // built from the same routing, so the hash provably matches the lockfile URL's
+    // bytes — and the wrong-repo 404 round-trips (2 requests each) are skipped.
+    let routed = artifact_repo_url(coord);
+    let mut repo_order: Vec<&String> = config.repository_urls.iter().collect();
+    repo_order.sort_by_key(|u| u.trim_end_matches('/') != routed.as_str());
 
     // POM/module metadata: try HTTP first so the hash matches the canonical URL bytes.
     // The Gradle cache may hold a differently-formatted copy (e.g. from plugins.gradle.org
@@ -443,8 +586,8 @@ pub async fn resolve_artifact_sha256(
     let is_metadata = coord.extension == "pom" || coord.extension == "module";
     if is_metadata {
         let mut last_error: Option<anyhow::Error> = None;
-        for repo_url in &config.repository_urls {
-            match fetch_sha256_http(coord, repo_url, &client, config.timeout_secs).await {
+        for repo_url in &repo_order {
+            match fetch_sha256_http(coord, repo_url, &client, config.timeout_secs, resolve_cache).await {
                 Ok(hex) => return Ok(hex),
                 Err(e) => {
                     log::debug!("HTTP fetch failed from {}: {}", repo_url, e);
@@ -454,7 +597,7 @@ pub async fn resolve_artifact_sha256(
         }
         // HTTP exhausted — fall back to Gradle cache (Gradle-bundled artifacts not on any remote repo)
         if let Some(ref guh) = gradle_home {
-            if let Some(hex) = find_sha256_in_gradle_cache(coord, guh)? {
+            if let Some(hex) = find_sha256_in_gradle_cache(coord, guh, resolve_cache)? {
                 return Ok(hex);
             }
         }
@@ -469,14 +612,14 @@ pub async fn resolve_artifact_sha256(
 
     // JARs/AARs: Gradle cache first (fast, avoids HTTP), then HTTP fallback.
     if let Some(ref guh) = gradle_home {
-        if let Some(hex) = find_sha256_in_gradle_cache(coord, guh)? {
+        if let Some(hex) = find_sha256_in_gradle_cache(coord, guh, resolve_cache)? {
             return Ok(hex);
         }
     }
 
     let mut last_error: Option<anyhow::Error> = None;
-    for repo_url in &config.repository_urls {
-        match fetch_sha256_http(coord, repo_url, &client, config.timeout_secs).await {
+    for repo_url in &repo_order {
+        match fetch_sha256_http(coord, repo_url, &client, config.timeout_secs, resolve_cache).await {
             Ok(hex) => return Ok(hex),
             Err(e) => {
                 log::debug!("HTTP fetch failed from {}: {}", repo_url, e);

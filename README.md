@@ -66,6 +66,15 @@ gradle2nix lock --project-dir .
 gradle2nix check --project-dir .
 ```
 
+`lock` resolves the dependency graph from POM/module metadata only — project
+artifacts (JARs/AARs) are never downloaded, the same way bun resolves npm
+packages from registry manifests without fetching tarballs. It also keeps a
+persistent lookup cache at
+`{gradle-user-home}/caches/gradle2nix/resolve-cache.json` (resolved SHA-256s,
+POM texts, confirmed 404s — Maven release URLs are immutable). Repeat runs
+against a retained Gradle home skip nearly all network traffic; delete the file
+to force full re-resolution.
+
 Consume the lockfile in your flake with `buildAndroidApp` (full APK/AAB derivation)
 or `buildGradleProject` (composable helpers — offline Maven repo, init script,
 Gradle flags):

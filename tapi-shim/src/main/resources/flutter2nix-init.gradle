@@ -46,6 +46,103 @@ def isFromGradleCache = { ra ->
     ra.file?.absolutePath?.contains('caches/modules-2/files-2.1') ?: false
 }
 
+// Locate a module's cached metadata file ({name}-{version}.module / .pom) under
+// files-2.1. Graph-only resolution downloads these small files but never artifacts.
+def cachedMetaFile = { File homeDir, String g, String n, String v, String suffix ->
+    def dir = new File(homeDir, 'caches/modules-2/files-2.1/' + g + '/' + n + '/' + v)
+    File found = null
+    dir.listFiles()?.each { hashDir ->
+        if (hashDir.isDirectory()) {
+            def f = new File(hashDir, n + '-' + v + suffix)
+            if (f.exists()) found = f
+        }
+    }
+    found
+}
+
+// The artifacts Gradle would download for a component, derived from cached
+// METADATA only. For GMM components, the files listed by the SELECTED variants
+// (matched by ResolvedVariantResult display name) are exactly what
+// resolvedArtifacts would yield — including classifier variants like
+// kotlin-gradle-plugin's `gradle76` or kotlin-stdlib's `all`. POM-only
+// components fall back to <packaging>. Returns [] for metadata-only modules
+// (BOMs, packaging=pom, KMP roots whose variants are available-at redirects);
+// their .pom/.module lockfile entries come from the metadata capture pass and
+// the Rust discovery phases, same as before.
+def gmmParseCache = Collections.synchronizedMap(new HashMap())
+def componentArtifacts = { File homeDir, String g, String n, String v, List variantNames ->
+    def results = []
+    def moduleFile = cachedMetaFile(homeDir, g, n, v, '.module')
+    if (moduleFile != null) {
+        def modKey = g + ':' + n + ':' + v
+        def gmm = gmmParseCache.computeIfAbsent(modKey) { k ->
+            try { new groovy.json.JsonSlurper().parse(moduleFile) } catch (Exception e) { [:] }
+        }
+        def prefix = n + '-' + v
+        gmm.variants?.each { variant ->
+            if (variantNames && !variantNames.contains(variant.name)) return
+            if (variant['available-at'] != null) return
+            variant.files?.each { f ->
+                // `url` is the repository filename the download URL is built from;
+                // `name` is only the local filename and can differ (KMP metadata
+                // variants publish e.g. name "foo-metadata-1.0-all.jar" under
+                // url "foo-1.0-all.jar").
+                String fname = f.url ?: f.name
+                if (!fname.startsWith(prefix)) return
+                def rest = fname.substring(prefix.length())
+                String classifier = null
+                String ext = null
+                if (rest.startsWith('-')) {
+                    def dot = rest.lastIndexOf('.')
+                    if (dot <= 1) return
+                    classifier = rest.substring(1, dot)
+                    ext = rest.substring(dot + 1)
+                } else if (rest.startsWith('.')) {
+                    ext = rest.substring(1)
+                } else {
+                    return
+                }
+                if (ext == 'module' || ext == 'pom') return
+                results.add([classifier: classifier, extension: ext])
+            }
+        }
+        // A GMM file is authoritative: if the selected variants list no files
+        // (KMP root, platform), there is nothing to lock for this component.
+        if (gmm.variants != null) return results
+    }
+    def pomFile = cachedMetaFile(homeDir, g, n, v, '.pom')
+    if (pomFile != null) {
+        def m = pomFile.text =~ /<packaging>\s*([^<\s]+)\s*<\/packaging>/
+        def packaging = m.find() ? m.group(1) : 'jar'
+        if (packaging == 'pom') return results
+        results.add([classifier: null, extension: packaging == 'aar' ? 'aar' : 'jar'])
+        return results
+    }
+    results.add([classifier: null, extension: 'jar'])
+    results
+}
+
+// Capture a configuration's dependency GRAPH without downloading artifact files.
+// resolutionResult fetches only POM/.module metadata; resolvedArtifacts (the old
+// approach) downloads every artifact — ~1.2GB for a minimal Flutter app — that
+// lockfile generation never reads. Bun applies the same principle to npm:
+// resolution consumes registry manifests, bytes are an install-time concern.
+def captureGraphComponents = { cfg, String scopeName, seen, allArtifacts, File homeDir, compArtifacts ->
+    cfg.incoming.resolutionResult.allComponents.each { comp ->
+        def cid = comp.id
+        if (!(cid instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier)) return
+        if (!cid.version || cid.version == 'unspecified') return
+        def variantNames = comp.variants.collect { it.displayName }
+        compArtifacts(homeDir, cid.group, cid.module, cid.version, variantNames).each { art ->
+            def key = cid.group + ':' + cid.module + ':' + cid.version + ':' + (art.classifier ?: '') + ':' + art.extension
+            if (seen.add(key)) {
+                allArtifacts.add([group: cid.group, artifact: cid.module, version: cid.version,
+                    classifier: art.classifier, extension: art.extension, scope: scopeName])
+            }
+        }
+    }
+}
+
 gradle.settingsEvaluated { settings ->
     try {
         def bsCfg = settings.buildscript.configurations.findByName('classpath')
@@ -98,17 +195,7 @@ gradle.projectsEvaluated {
             try {
                 def cfg = proj.configurations.getByName(configName)
                 if (cfg.canBeResolved) {
-                    cfg.resolvedConfiguration.resolvedArtifacts.each { ra ->
-                        if (!isFromGradleCache(ra)) return
-                        def mv = ra.moduleVersion.id
-                        def ext = ra.extension ?: 'jar'
-                        if (!mv.version || mv.version == 'unspecified') return
-                        def key = mv.group + ':' + mv.name + ':' + mv.version + ':' + (ra.classifier ?: '') + ':' + ext
-                        if (seen.add(key)) {
-                            allArtifacts.add([group: mv.group, artifact: mv.name, version: mv.version,
-                                classifier: ra.classifier, extension: ext, scope: configName])
-                        }
-                    }
+                    captureGraphComponents(cfg, configName, seen, allArtifacts, gradleHomeDir, componentArtifacts)
                 }
             } catch (Exception ignored) {}
         }
@@ -147,29 +234,7 @@ gradle.projectsEvaluated {
                     try {
                         def config = proj.configurations.getByName(configName)
                         if (config.canBeResolved) {
-                            config.resolvedConfiguration.resolvedArtifacts.each { ra ->
-                                if (!isFromGradleCache(ra)) return
-                                def mv = ra.moduleVersion.id
-                                def declaredExt = ra.extension ?: 'jar'
-                                def realExt = declaredExt
-                                if (declaredExt == 'jar') {
-                                    def artifactDir = new File(gradleHomeDir, 'caches/modules-2/files-2.1/' + mv.group + '/' + mv.name + '/' + mv.version)
-                                    if (artifactDir.exists()) {
-                                        def aarName = mv.name + '-' + mv.version + '.aar'
-                                        def hasAar = artifactDir.listFiles()?.any { hashDir ->
-                                            hashDir.isDirectory() && new File(hashDir, aarName).exists()
-                                        }
-                                        if (hasAar) realExt = 'aar'
-                                    }
-                                }
-                                if (!mv.version || mv.version == 'unspecified') {
-                                    return
-                                }
-                                def key = mv.group + ':' + mv.name + ':' + mv.version + ':' + (ra.classifier ?: '') + ':' + realExt
-                                if (seen.add(key)) {
-                                    allArtifacts.add([group: mv.group, artifact: mv.name, version: mv.version, classifier: ra.classifier, extension: realExt, scope: configName])
-                                }
-                            }
+                            captureGraphComponents(config, configName, seen, allArtifacts, gradleHomeDir, componentArtifacts)
                         }
                     } catch (Exception ignored) {}
                 }

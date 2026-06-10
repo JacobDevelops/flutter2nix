@@ -2,7 +2,8 @@ use anyhow::Context;
 use nix_core::dep::{DependencyGraph, LockedDependency};
 use std::path::{Path, PathBuf};
 
-use crate::maven::{extract_pom_bom_imports, extract_pom_direct_deps, extract_pom_parent, fetch_pom_content, resolve_artifact_sha256, resolve_artifacts_batch, MavenCoordinate, MavenResolverConfig};
+use crate::maven::{artifact_repo_url, extract_pom_bom_imports, extract_pom_direct_deps, extract_pom_parent, fetch_pom_content, resolve_artifact_sha256, resolve_artifacts_batch, MavenCoordinate, MavenResolverConfig};
+use crate::resolve_cache::ResolveCache;
 use crate::tapi::model::parse_tapi_output;
 use crate::tapi::shim::{invoke_tapi_shim, TapiShimConfig};
 
@@ -24,38 +25,6 @@ fn coord_to_name(coord: &MavenCoordinate) -> String {
         Some(c) => format!("{}:{}:{}:{}", coord.group, coord.artifact, coord.version, c),
         None => format!("{}:{}:{}", coord.group, coord.artifact, coord.version),
     }
-}
-
-/// Route artifact to the correct repository base URL for the lockfile.
-/// This determines the download URL written into gradle2nix.lock — it must match
-/// the repo that actually hosts the artifact.
-fn artifact_repo_url(coord: &MavenCoordinate, _configured_repos: &[String]) -> String {
-    const FLUTTER_STORAGE: &str = "https://storage.googleapis.com/download.flutter.io";
-    const GOOGLE_MAVEN: &str = "https://dl.google.com/dl/android/maven2";
-    const MAVEN_CENTRAL: &str = "https://repo.maven.apache.org/maven2";
-    const GRADLE_PLUGIN_PORTAL: &str = "https://plugins.gradle.org/m2";
-
-    if coord.group.starts_with("io.flutter") {
-        return FLUTTER_STORAGE.to_string();
-    }
-
-    let is_group = |g: &str| coord.group == g || coord.group.starts_with(&format!("{}.", g));
-
-    // Gradle's own Kotlin DSL plugins are published to the Gradle Plugin Portal, not Maven Central.
-    if is_group("org.gradle.kotlin") {
-        return GRADLE_PLUGIN_PORTAL.to_string();
-    }
-
-    // Only Google's own namespaces belong on Google Maven. Third-party AARs
-    // (e.g. com.getkeepsafe.relinker) are published to Maven Central.
-    let is_google = is_group("androidx")
-        || is_group("com.android")
-        || is_group("com.google.android")
-        || is_group("com.google.firebase")
-        || is_group("com.google.gms")
-        || is_group("com.google.ar");
-
-    if is_google { GOOGLE_MAVEN.to_string() } else { MAVEN_CENTRAL.to_string() }
 }
 
 /// Core lock pipeline: TAPI → parse → resolve SHA-256 → DependencyGraph.
@@ -126,14 +95,30 @@ pub async fn build_dependency_graph(
         repositories.to_vec()
     };
 
-    let resolver_config = MavenResolverConfig {
+    let mut resolver_config = MavenResolverConfig {
         repository_urls: repo_urls.clone(),
         local_cache_dir: gradle_cache_dir.map(PathBuf::from),
         gradle_user_home: gradle_user_home.map(PathBuf::from),
         timeout_secs,
-        max_concurrency: 10,
+        max_concurrency: 64,
+        resolve_cache: None,
     };
-    let mut resolved = resolve_artifacts_batch(&coords, &resolver_config).await?;
+    // Persistent lookup cache lives next to Gradle's own caches so the warm-CI
+    // scenario (retained Gradle home) skips re-resolving every URL. Hermetic test
+    // mode (local_cache_dir, no gradle home) has no home → caching stays off.
+    resolver_config.resolve_cache = resolver_config
+        .discovery_gradle_home()
+        .map(|home| std::sync::Arc::new(ResolveCache::open(&home)));
+
+    // Persist whatever resolved before bubbling an error: a single broken artifact
+    // must not throw away hundreds of completed lookups on the next attempt.
+    let batch_result = resolve_artifacts_batch(&coords, &resolver_config).await;
+    if let Some(cache) = &resolver_config.resolve_cache {
+        if let Err(e) = cache.persist() {
+            log::warn!("could not persist resolve cache: {:#}", e);
+        }
+    }
+    let mut resolved = batch_result?;
     eprintln!("gradle2nix: resolved {} artifacts, running discovery phases...", resolved.len());
 
     // 6. Discover declared-version POMs first.
@@ -149,7 +134,7 @@ pub async fn build_dependency_graph(
     // 6b. Discover transitive parent POMs + BOM imports.
     // Now sees the full set of POMs including declared-version additions above, so it can
     // follow parent chains like commons-io:2.13.0 → commons-parent:58 → junit-bom:5.9.3.
-    resolved = discover_parent_poms(resolved, &resolver_config, &repo_urls).await?;
+    resolved = discover_parent_poms(resolved, &resolver_config).await?;
     eprintln!("gradle2nix: parent POMs done ({} total), scanning Gradle cache for missing versions...", resolved.len());
 
     // 6b2. Discover all cached versions of known artifacts.
@@ -176,11 +161,17 @@ pub async fn build_dependency_graph(
     resolved = discover_agp_aapt2_artifacts(resolved, &resolver_config).await?;
     eprintln!("gradle2nix: discovery complete ({} total artifacts), building lockfile...", resolved.len());
 
+    if let Some(cache) = &resolver_config.resolve_cache {
+        if let Err(e) = cache.persist() {
+            log::warn!("could not persist resolve cache: {:#}", e);
+        }
+    }
+
     // 7. Build DependencyGraph — route each artifact to the correct repository URL.
     let nodes = resolved
         .into_iter()
         .map(|(coord, sha256)| {
-            let repo_url = artifact_repo_url(&coord, &repo_urls);
+            let repo_url = artifact_repo_url(&coord);
             let url = format!("{}/{}", repo_url.trim_end_matches('/'), coord.to_artifact_path());
             LockedDependency::new(
                 coord_to_name(&coord),
@@ -396,6 +387,8 @@ async fn discover_declared_dep_poms(
     mut resolved: Vec<(MavenCoordinate, String)>,
     config: &MavenResolverConfig,
 ) -> anyhow::Result<Vec<(MavenCoordinate, String)>> {
+    use futures::stream::{self, StreamExt};
+
     let gradle_home = config.discovery_gradle_home();
     let gradle_home = match gradle_home {
         Some(h) => h,
@@ -403,7 +396,6 @@ async fn discover_declared_dep_poms(
     };
     let modules_dir = gradle_home.join("caches/modules-2/files-2.1");
 
-    let client = reqwest::Client::new();
     let mut seen: std::collections::HashSet<String> = resolved
         .iter()
         .map(|(c, _)| format!("{}:{}:{}", c.group, c.artifact, c.version))
@@ -415,46 +407,59 @@ async fn discover_declared_dep_poms(
         .map(|(c, _)| c.clone())
         .collect();
 
+    // Wave-based BFS: fetch every POM of the wave concurrently, extract candidates,
+    // then resolve all new candidates concurrently. Each wave is one network
+    // round-trip deep instead of one round-trip per POM.
     while !to_process.is_empty() {
-        let mut next_wave: Vec<MavenCoordinate> = Vec::new();
+        let pom_texts: Vec<Option<String>> = stream::iter(to_process)
+            .map(|coord| async move {
+                let single_repo = vec![artifact_repo_url(&coord)];
+                fetch_pom_content(&coord, &single_repo, config).await
+            })
+            .buffer_unordered(config.max_concurrency)
+            .collect()
+            .await;
 
-        for coord in &to_process {
-            let repo_url = artifact_repo_url(coord, &config.repository_urls);
-            let single_repo = vec![repo_url.clone()];
-            let pom_text = match fetch_pom_content(coord, &single_repo, &client, config.timeout_secs).await {
-                Some(t) => t,
-                None => continue,
-            };
-
+        let mut candidates: Vec<MavenCoordinate> = Vec::new();
+        for pom_text in pom_texts.into_iter().flatten() {
             for (dep_g, dep_a, dep_v) in extract_pom_direct_deps(&pom_text) {
                 let key = format!("{}:{}:{}", dep_g, dep_a, dep_v);
                 if !seen.insert(key) {
                     continue;
                 }
                 // Only include if this exact version is already in the local Gradle cache.
-                let cache_ver_dir = modules_dir.join(&dep_g).join(&dep_a).join(&dep_v);
-                if !cache_ver_dir.exists() {
+                if !modules_dir.join(&dep_g).join(&dep_a).join(&dep_v).exists() {
                     continue;
                 }
-                let dep_coord = MavenCoordinate {
+                candidates.push(MavenCoordinate {
                     group: dep_g,
                     artifact: dep_a,
                     version: dep_v,
                     classifier: None,
                     extension: "pom".to_string(),
-                };
-                match resolve_artifact_sha256(&dep_coord, config).await {
-                    Ok(sha256) => {
-                        next_wave.push(dep_coord.clone());
-                        resolved.push((dep_coord, sha256));
-                    }
-                    Err(e) => {
-                        log::debug!("declared dep POM not resolvable {}: {:#}", dep_coord.to_artifact_path(), e);
-                    }
-                }
+                });
             }
         }
 
+        let wave: Vec<Option<(MavenCoordinate, String)>> = stream::iter(candidates)
+            .map(|coord| async move {
+                match resolve_artifact_sha256(&coord, config).await {
+                    Ok(sha256) => Some((coord, sha256)),
+                    Err(e) => {
+                        log::debug!("declared dep POM not resolvable {}: {:#}", coord.to_artifact_path(), e);
+                        None
+                    }
+                }
+            })
+            .buffer_unordered(config.max_concurrency)
+            .collect()
+            .await;
+
+        let mut next_wave: Vec<MavenCoordinate> = Vec::new();
+        for (coord, sha256) in wave.into_iter().flatten() {
+            next_wave.push(coord.clone());
+            resolved.push((coord, sha256));
+        }
         to_process = next_wave;
     }
 
@@ -526,149 +531,79 @@ async fn discover_kmp_base_artifacts(
 async fn discover_parent_poms(
     mut resolved: Vec<(MavenCoordinate, String)>,
     config: &MavenResolverConfig,
-    repo_urls: &[String],
 ) -> anyhow::Result<Vec<(MavenCoordinate, String)>> {
-    let client = reqwest::Client::new();
+    use futures::stream::{self, StreamExt};
+
     let mut seen: std::collections::HashSet<String> = resolved
         .iter()
         .filter(|(c, _)| c.extension == "pom")
         .map(|(c, _)| format!("{}:{}:{}", c.group, c.artifact, c.version))
         .collect();
 
-    let mut to_fetch: Vec<(MavenCoordinate, String)> = resolved
+    let mut to_fetch: Vec<MavenCoordinate> = resolved
         .iter()
         .filter(|(c, _)| c.extension == "pom")
-        .cloned()
+        .map(|(c, _)| c.clone())
         .collect();
 
+    // Wave-based BFS, same shape as discover_declared_dep_poms: parent chains are
+    // shallow (3-4 levels), so the whole walk costs a handful of concurrent waves.
     while !to_fetch.is_empty() {
-        let mut next_wave: Vec<(MavenCoordinate, String)> = Vec::new();
+        let pom_texts: Vec<Option<String>> = stream::iter(to_fetch)
+            .map(|coord| async move {
+                let single_repo = vec![artifact_repo_url(&coord)];
+                fetch_pom_content(&coord, &single_repo, config).await
+            })
+            .buffer_unordered(config.max_concurrency)
+            .collect()
+            .await;
 
-        for (coord, _) in &to_fetch {
-            let repo_url = artifact_repo_url(coord, repo_urls);
-            let single_repo = vec![repo_url.clone()];
-            let content = fetch_pom_content(coord, &single_repo, &client, config.timeout_secs).await;
-            let pom_text = match content {
-                Some(t) => t,
-                None => continue,
-            };
-
-            // Collect both <parent> and <dependencyManagement> BOM imports.
-            let mut candidates: Vec<(String, String, String)> = Vec::new();
+        // Collect both <parent> and <dependencyManagement> BOM imports.
+        let mut candidates: Vec<MavenCoordinate> = Vec::new();
+        for pom_text in pom_texts.into_iter().flatten() {
+            let mut found: Vec<(String, String, String)> = Vec::new();
             if let Some(parent) = extract_pom_parent(&pom_text) {
-                candidates.push(parent);
+                found.push(parent);
             }
-            candidates.extend(extract_pom_bom_imports(&pom_text));
+            found.extend(extract_pom_bom_imports(&pom_text));
 
-            for (pg, pa, pv) in candidates {
+            for (pg, pa, pv) in found {
                 let key = format!("{}:{}:{}", pg, pa, pv);
                 if !seen.insert(key) {
                     continue;
                 }
-                let dep_coord = MavenCoordinate {
+                candidates.push(MavenCoordinate {
                     group: pg,
                     artifact: pa,
                     version: pv,
                     classifier: None,
                     extension: "pom".to_string(),
-                };
-                match resolve_artifact_sha256(&dep_coord, config).await {
-                    Ok(sha256) => {
-                        next_wave.push((dep_coord.clone(), sha256.clone()));
-                        resolved.push((dep_coord, sha256));
-                    }
-                    Err(e) => {
-                        log::warn!("Could not resolve POM dep {}: {:#}", dep_coord.to_artifact_path(), e);
-                    }
-                }
+                });
             }
         }
 
+        let wave: Vec<Option<(MavenCoordinate, String)>> = stream::iter(candidates)
+            .map(|coord| async move {
+                match resolve_artifact_sha256(&coord, config).await {
+                    Ok(sha256) => Some((coord, sha256)),
+                    Err(e) => {
+                        log::warn!("Could not resolve POM dep {}: {:#}", coord.to_artifact_path(), e);
+                        None
+                    }
+                }
+            })
+            .buffer_unordered(config.max_concurrency)
+            .collect()
+            .await;
+
+        let mut next_wave: Vec<MavenCoordinate> = Vec::new();
+        for (coord, sha256) in wave.into_iter().flatten() {
+            next_wave.push(coord.clone());
+            resolved.push((coord, sha256));
+        }
         to_fetch = next_wave;
     }
 
     Ok(resolved)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn coord(group: &str, artifact: &str, version: &str, ext: &str) -> MavenCoordinate {
-        MavenCoordinate {
-            group: group.to_string(),
-            artifact: artifact.to_string(),
-            version: version.to_string(),
-            classifier: None,
-            extension: ext.to_string(),
-        }
-    }
-
-    #[test]
-    fn firebase_exact_group_routes_to_google_maven() {
-        // Regression: "com.google.firebase" (no subpackage) was routed to Maven Central
-        // because starts_with("com.google.firebase.") failed on the exact group name.
-        let c = coord("com.google.firebase", "firebase-annotations", "16.2.0", "jar");
-        assert_eq!(
-            artifact_repo_url(&c, &[]),
-            "https://dl.google.com/dl/android/maven2"
-        );
-    }
-
-    #[test]
-    fn firebase_subpackage_routes_to_google_maven() {
-        let c = coord("com.google.firebase.encoders", "firebase-encoders-json", "18.0.0", "jar");
-        assert_eq!(
-            artifact_repo_url(&c, &[]),
-            "https://dl.google.com/dl/android/maven2"
-        );
-    }
-
-    #[test]
-    fn androidx_subpackage_routes_to_google_maven() {
-        let c = coord("androidx.core", "core-ktx", "1.12.0", "aar");
-        assert_eq!(
-            artifact_repo_url(&c, &[]),
-            "https://dl.google.com/dl/android/maven2"
-        );
-    }
-
-    #[test]
-    fn third_party_aar_routes_to_maven_central() {
-        // AARs from third-party groups are on Maven Central, not Google Maven.
-        let c = coord("com.getkeepsafe.relinker", "relinker", "1.4.5", "aar");
-        assert_eq!(
-            artifact_repo_url(&c, &[]),
-            "https://repo.maven.apache.org/maven2"
-        );
-    }
-
-    #[test]
-    fn kotlin_stdlib_routes_to_maven_central() {
-        let c = coord("org.jetbrains.kotlin", "kotlin-stdlib", "1.9.0", "jar");
-        assert_eq!(
-            artifact_repo_url(&c, &[]),
-            "https://repo.maven.apache.org/maven2"
-        );
-    }
-
-    #[test]
-    fn flutter_io_routes_to_flutter_storage() {
-        let c = coord("io.flutter", "flutter_embedding_debug", "1.0.0-abc123", "jar");
-        assert_eq!(
-            artifact_repo_url(&c, &[]),
-            "https://storage.googleapis.com/download.flutter.io"
-        );
-    }
-
-    #[test]
-    fn gradle_kotlin_dsl_routes_to_plugin_portal() {
-        // Gradle's own Kotlin DSL plugins are only published to the Gradle Plugin Portal;
-        // routing them to Maven Central would produce 404 URLs in the lockfile.
-        let c = coord("org.gradle.kotlin", "gradle-kotlin-dsl-plugins", "5.2.0", "jar");
-        assert_eq!(
-            artifact_repo_url(&c, &[]),
-            "https://plugins.gradle.org/m2"
-        );
-    }
-}

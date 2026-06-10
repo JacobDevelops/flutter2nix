@@ -28,6 +28,14 @@ private val lenientJson = Json { ignoreUnknownKeys = true }
 private val INIT_SCRIPT: String =
     object {}.javaClass.getResource("/flutter2nix-init.gradle")!!.readText()
 
+private val shimStart = System.currentTimeMillis()
+
+/// Stage timing on stderr: attributes shim wall-clock to distro install /
+/// configuration / dependency resolution without needing --info noise.
+private fun mark(label: String) {
+    System.err.println("TAPI-TIMING: $label +${System.currentTimeMillis() - shimStart}ms")
+}
+
 fun main(args: Array<String>) {
     val projectDir = File(if (args.isNotEmpty()) args[0] else ".")
 
@@ -51,15 +59,18 @@ fun main(args: Array<String>) {
 
     var exitCode = 0
     try {
-        // Reuse the existing Gradle distribution and Maven artifact cache.
+        // Share the Gradle distribution and Maven artifact cache with the real home.
+        // The dirs are created if missing: on a cold home, everything Gradle downloads
+        // flows through the symlinks into the real home and survives this run —
+        // otherwise a cold start downloads ~1GB into the temp home and deletes it,
+        // and the next run pays the entire download again.
         for (sharedDir in listOf("caches", "wrapper")) {
             val target = File(realGradleHome, sharedDir)
-            if (target.exists()) {
-                Files.createSymbolicLink(
-                    File(tempGradleHome, sharedDir).toPath(),
-                    target.toPath()
-                )
-            }
+            Files.createDirectories(target.toPath())
+            Files.createSymbolicLink(
+                File(tempGradleHome, sharedDir).toPath(),
+                target.toPath()
+            )
         }
         val initDir = File(tempGradleHome, "init.d")
         initDir.mkdirs()
@@ -84,10 +95,13 @@ fun main(args: Array<String>) {
             .connect()
 
         connection.use { conn ->
+            mark("connected")
             val buildEnv = conn.getModel(BuildEnvironment::class.java)
             val gradleVersion = buildEnv.gradle.gradleVersion
+            mark("distro ready + daemon up (BuildEnvironment)")
 
             val initArtifacts = tryInitScript(conn, kgpPersistentDir)
+            mark("init-script build finished")
 
             if (initArtifacts != null && initArtifacts.isNotEmpty()) {
                 outputSentinels(gradleVersion, initArtifacts)
