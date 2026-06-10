@@ -1,0 +1,32 @@
+{
+  "version": "8.14.4",
+  "artifacts": [
+    {
+      "group": "com.google.guava",
+      "artifact": "guava",
+      "version": "31.1-jre",
+      "classifier": null,
+      "extension": "jar",
+      "scope": "compile"
+    },
+    {
+      "group": "com.android.tools.build",
+      "artifact": "aapt2-proto",
+      "version": "8.6.0-11315950",
+      "classifier": null,
+      "extension": "jar",
+      "scope": "compile"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "artifact": "kotlinx-serialization-json-jvm",
+      "version": "1.6.3",
+      "classifier": null,
+      "extension": "jar",
+      "scope": "compile"
+    }
+  ],
+  "configurations": [
+    "compile"
+  ]
+}

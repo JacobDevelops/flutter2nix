@@ -32,6 +32,7 @@ async fn test_e2e_real_android() {
         output: Some(tmp.path().to_path_buf()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: None,
+        gradle_user_home: None,
         timeout_secs: 300,
     })
     .await;
@@ -78,6 +79,7 @@ async fn test_lock_simple_android_flutter() {
         gradle_cache_dir: Some(PathBuf::from(
             "../gradle2nix/tests/fixtures/maven-repos/maven-central-stub",
         )),
+        gradle_user_home: None,
         timeout_secs: 60,
     })
     .await
@@ -108,6 +110,7 @@ async fn test_lock_android_section_present() {
         gradle_cache_dir: Some(PathBuf::from(
             "../gradle2nix/tests/fixtures/maven-repos/maven-central-stub",
         )),
+        gradle_user_home: None,
         timeout_secs: 60,
     })
     .await
@@ -137,6 +140,7 @@ async fn test_lock_ios_absent_for_android_only_project() {
         gradle_cache_dir: Some(PathBuf::from(
             "../gradle2nix/tests/fixtures/maven-repos/maven-central-stub",
         )),
+        gradle_user_home: None,
         timeout_secs: 60,
     })
     .await
@@ -164,6 +168,7 @@ async fn test_flutter_lock_android_only() {
         gradle_cache_dir: Some(PathBuf::from(
             "../gradle2nix/tests/fixtures/maven-repos/maven-central-stub",
         )),
+        gradle_user_home: None,
         timeout_secs: 60,
     })
     .await
@@ -194,6 +199,7 @@ async fn test_lock_fails_without_pubspec() {
         output: None,
         repositories: None,
         gradle_cache_dir: None,
+        gradle_user_home: None,
         timeout_secs: 60,
     })
     .await;
@@ -204,4 +210,41 @@ async fn test_lock_fails_without_pubspec() {
         msg.contains("pubspec.yaml"),
         "error must mention pubspec.yaml, got: {msg}"
     );
+}
+
+#[tokio::test]
+async fn test_check_fresh_lockfile() {
+    let result = flutter2nix::cli::check::run(flutter2nix::cli::check::CheckCommand {
+        project_dir: PathBuf::from("tests/fixtures/flutter-projects/simple-android-flutter"),
+        lockfile: None,
+        repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
+        gradle_cache_dir: Some(PathBuf::from(
+            "../gradle2nix/tests/fixtures/maven-repos/maven-central-stub",
+        )),
+        gradle_user_home: None,
+        timeout_secs: 60,
+    })
+    .await;
+    assert!(result.is_ok(), "check must pass for a fresh lockfile: {:?}", result.unwrap_err());
+}
+
+#[tokio::test]
+async fn test_check_stale_lockfile() {
+    // A lockfile with no android nodes cannot match the regenerated graph.
+    let stale = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(stale.path(), r#"{ "android": { "nodes": [] } }"#).unwrap();
+
+    let err = flutter2nix::cli::check::run(flutter2nix::cli::check::CheckCommand {
+        project_dir: PathBuf::from("tests/fixtures/flutter-projects/simple-android-flutter"),
+        lockfile: Some(stale.path().to_path_buf()),
+        repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
+        gradle_cache_dir: Some(PathBuf::from(
+            "../gradle2nix/tests/fixtures/maven-repos/maven-central-stub",
+        )),
+        gradle_user_home: None,
+        timeout_secs: 60,
+    })
+    .await
+    .expect_err("check must fail for a stale lockfile");
+    assert!(err.to_string().contains("stale"), "error must say stale, got: {err}");
 }

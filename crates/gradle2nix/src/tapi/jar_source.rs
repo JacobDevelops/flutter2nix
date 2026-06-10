@@ -21,7 +21,15 @@ pub fn select_tapi_shim_source() -> anyhow::Result<TapiShimSource> {
     )))
 }
 
-pub fn extract_jar_to_temp(source: TapiShimSource) -> anyhow::Result<PathBuf> {
+/// An extracted shim JAR. Dropping this deletes the temp extraction (a ~30 MB
+/// file per lock run otherwise accumulates in /tmp); env-provided JARs are
+/// left untouched.
+pub struct ShimJar {
+    pub path: PathBuf,
+    _temp: Option<tempfile::TempPath>,
+}
+
+pub fn extract_jar_to_temp(source: TapiShimSource) -> anyhow::Result<ShimJar> {
     match source {
         TapiShimSource::Embedded(bytes) => {
             let mut temp = tempfile::Builder::new()
@@ -29,9 +37,9 @@ pub fn extract_jar_to_temp(source: TapiShimSource) -> anyhow::Result<PathBuf> {
                 .suffix(".jar")
                 .tempfile()?;
             temp.write_all(bytes)?;
-            let (_, path) = temp.keep()?;
-            Ok(path)
+            let temp_path = temp.into_temp_path();
+            Ok(ShimJar { path: temp_path.to_path_buf(), _temp: Some(temp_path) })
         }
-        TapiShimSource::EnvPath(path) => Ok(path),
+        TapiShimSource::EnvPath(path) => Ok(ShimJar { path, _temp: None }),
     }
 }

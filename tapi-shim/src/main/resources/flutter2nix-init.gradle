@@ -1,0 +1,297 @@
+// Init scripts in GRADLE_USER_HOME/init.d/ apply to ALL builds in the composite
+// (root + included plugin builds like flutter_tools). When flutter_tools/gradle is in
+// the Nix store, any write to its projectDir fails with NoSuchFileException.
+// Both scratch dirs live INSIDE the Gradle user home (a temp dir owned by the
+// TAPI shim / Nix sandbox / bench harness), so they are deleted along with it.
+// Putting them in java.io.tmpdir leaked a pcache/kgp dir pair per build.
+def flutter2nixTmpBase = new File(gradle.gradleUserHomeDir, "flutter2nix-tmp")
+def flutter2nixProjectCache = new File(flutter2nixTmpBase,
+    "pcache-" + Long.toHexString(System.nanoTime()))
+flutter2nixProjectCache.mkdirs()
+
+// KGP's kotlin.project.persistent.dir controls where ProjectFilesForCompilation writes
+// .kotlin/sessions/*.salive. Without this redirect, it defaults to
+// rootProject.projectDir/.kotlin — the immutable Nix store for flutter_tools.
+def flutter2nixKotlinPersistDir = new File(flutter2nixTmpBase,
+    "kgp-" + Long.toHexString(System.nanoTime()))
+flutter2nixKotlinPersistDir.mkdirs()
+
+beforeSettings { settings ->
+    settings.gradle.startParameter.setProjectCacheDir(flutter2nixProjectCache)
+    // startParameter.getProjectProperties() returns an unmodifiable view in Gradle 8.x;
+    // copy it, add our key, and set it back via the setter.
+    def props = new java.util.LinkedHashMap(settings.gradle.startParameter.projectProperties)
+    props["kotlin.project.persistent.dir"] = flutter2nixKotlinPersistDir.absolutePath
+    settings.gradle.startParameter.setProjectProperties(props)
+}
+
+// Belt-and-suspenders: also set via project.ext so project.findProperty() finds the
+// value even if GradleProperties was snapshotted before our beforeSettings hook ran.
+// Fires before each project's build.gradle.kts runs (before KGP registers tasks), so
+// GradleCompileTaskProvider sees the writable path in PersistentCachesKt.getKotlinSessionsDir().
+gradle.allprojects {
+    ext.set("kotlin.project.persistent.dir", flutter2nixKotlinPersistDir.absolutePath)
+}
+
+// Capture settings-script classpath: plugins { id("...") version "..." } in settings.gradle.kts
+// are resolved here (not in rootProject.buildscript), so this is the only place to catch
+// kotlin-gradle-plugin:2.1.0, com.android.tools.build:gradle:8.6.0, etc.
+def preEvalArtifacts = Collections.synchronizedList(new ArrayList())
+def preEvalSeen = Collections.synchronizedSet(new HashSet())
+
+// Composite-build substitutions resolve as project artifacts (file in local build/
+// dir, not in the Gradle module cache). They have no Maven coordinates and must
+// not appear in the lockfile. Filter them by checking the resolved file path.
+def isFromGradleCache = { ra ->
+    ra.file?.absolutePath?.contains('caches/modules-2/files-2.1') ?: false
+}
+
+gradle.settingsEvaluated { settings ->
+    try {
+        def bsCfg = settings.buildscript.configurations.findByName('classpath')
+        if (bsCfg != null && bsCfg.canBeResolved) {
+            bsCfg.resolvedConfiguration.resolvedArtifacts.each { ra ->
+                if (!isFromGradleCache(ra)) return
+                def mv = ra.moduleVersion.id
+                def ext = ra.extension ?: 'jar'
+                if (!mv.version || mv.version == 'unspecified') return
+                def key = mv.group + ':' + mv.name + ':' + mv.version + ':' + (ra.classifier ?: '') + ':' + ext
+                if (preEvalSeen.add(key)) {
+                    preEvalArtifacts.add([group: mv.group, artifact: mv.name, version: mv.version,
+                        classifier: ra.classifier, extension: ext, scope: 'settingsClasspath'])
+                }
+            }
+        }
+    } catch (Exception ignored) {}
+}
+
+gradle.projectsEvaluated {
+    def seen = Collections.synchronizedSet(new HashSet(preEvalSeen))
+    def allArtifacts = Collections.synchronizedList(new ArrayList(preEvalArtifacts))
+    def gradleHomeDir = gradle.gradleUserHomeDir
+
+    // Eagerly capture this build's buildscript classpath AND project configurations.
+    // This init script fires for EVERY build instance in the composite, including included
+    // plugin builds like flutter_tools. The main ":flutter2nixDeps" task is never run on
+    // included builds, so eager capture here is the only way to reach those artifacts.
+    // Project runtime/compile configs capture impl deps like kotlinx-serialization-json
+    // that are needed by the flutter_tools included build at compile time.
+    rootProject.allprojects.each { proj ->
+        try {
+            def bsCfg = proj.buildscript.configurations.findByName('classpath')
+            if (bsCfg != null && bsCfg.canBeResolved) {
+                bsCfg.resolvedConfiguration.resolvedArtifacts.each { ra ->
+                    if (!isFromGradleCache(ra)) return
+                    def mv = ra.moduleVersion.id
+                    def ext = ra.extension ?: 'jar'
+                    if (!mv.version || mv.version == 'unspecified') return
+                    def key = mv.group + ':' + mv.name + ':' + mv.version + ':' + (ra.classifier ?: '') + ':' + ext
+                    if (seen.add(key)) {
+                        allArtifacts.add([group: mv.group, artifact: mv.name, version: mv.version,
+                            classifier: ra.classifier, extension: ext, scope: 'buildscriptClasspath'])
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        proj.configurations.names.toList().each { configName ->
+            if (configName.startsWith('_') || configName.startsWith('test') || configName.startsWith('Test')) return
+            try {
+                def cfg = proj.configurations.getByName(configName)
+                if (cfg.canBeResolved) {
+                    cfg.resolvedConfiguration.resolvedArtifacts.each { ra ->
+                        if (!isFromGradleCache(ra)) return
+                        def mv = ra.moduleVersion.id
+                        def ext = ra.extension ?: 'jar'
+                        if (!mv.version || mv.version == 'unspecified') return
+                        def key = mv.group + ':' + mv.name + ':' + mv.version + ':' + (ra.classifier ?: '') + ':' + ext
+                        if (seen.add(key)) {
+                            allArtifacts.add([group: mv.group, artifact: mv.name, version: mv.version,
+                                classifier: ra.classifier, extension: ext, scope: configName])
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+    }
+    // Capture POM/module metadata for eagerly-collected buildscript artifacts.
+    def seenEagerMeta = new HashSet()
+    new ArrayList(allArtifacts).each { art ->
+        def modKey = art.group + ':' + art.artifact + ':' + art.version
+        if (!seenEagerMeta.add(modKey)) return
+        def artifactDir = new File(gradleHomeDir,
+            'caches/modules-2/files-2.1/' + art.group + '/' + art.artifact + '/' + art.version)
+        if (!artifactDir.exists()) return
+        ['pom', 'module'].each { mExt ->
+            def filename = art.artifact + '-' + art.version + '.' + mExt
+            def exists = artifactDir.listFiles()?.any { hashDir ->
+                hashDir.isDirectory() && new File(hashDir, filename).exists()
+            }
+            def metaKey = modKey + '::' + mExt
+            if (exists && seen.add(metaKey)) {
+                allArtifacts.add([group: art.group, artifact: art.artifact,
+                    version: art.version, classifier: null, extension: mExt, scope: 'metadata'])
+            }
+        }
+    }
+    // Emit immediately so TapiShim captures deps from included builds even if their
+    // tasks are never explicitly invoked.
+    println 'FLUTTER2NIX_DEPS:' + groovy.json.JsonOutput.toJson(allArtifacts)
+
+    def collectTasks = rootProject.allprojects.collect { proj ->
+        proj.task('flutter2nixDepsCollect') {
+            doLast {
+                proj.configurations.names.toList().each { configName ->
+                    if (!configName.endsWith('RuntimeClasspath') && !configName.endsWith('CompileClasspath')) {
+                        return
+                    }
+                    try {
+                        def config = proj.configurations.getByName(configName)
+                        if (config.canBeResolved) {
+                            config.resolvedConfiguration.resolvedArtifacts.each { ra ->
+                                if (!isFromGradleCache(ra)) return
+                                def mv = ra.moduleVersion.id
+                                def declaredExt = ra.extension ?: 'jar'
+                                def realExt = declaredExt
+                                if (declaredExt == 'jar') {
+                                    def artifactDir = new File(gradleHomeDir, 'caches/modules-2/files-2.1/' + mv.group + '/' + mv.name + '/' + mv.version)
+                                    if (artifactDir.exists()) {
+                                        def aarName = mv.name + '-' + mv.version + '.aar'
+                                        def hasAar = artifactDir.listFiles()?.any { hashDir ->
+                                            hashDir.isDirectory() && new File(hashDir, aarName).exists()
+                                        }
+                                        if (hasAar) realExt = 'aar'
+                                    }
+                                }
+                                if (!mv.version || mv.version == 'unspecified') {
+                                    return
+                                }
+                                def key = mv.group + ':' + mv.name + ':' + mv.version + ':' + (ra.classifier ?: '') + ':' + realExt
+                                if (seen.add(key)) {
+                                    allArtifacts.add([group: mv.group, artifact: mv.name, version: mv.version, classifier: ra.classifier, extension: realExt, scope: configName])
+                                }
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+                try {
+                    def bsCfg = proj.buildscript.configurations.findByName('classpath')
+                    if (bsCfg != null && bsCfg.canBeResolved) {
+                        bsCfg.resolvedConfiguration.resolvedArtifacts.each { ra ->
+                            if (!isFromGradleCache(ra)) return
+                            def mv = ra.moduleVersion.id
+                            def ext = ra.extension ?: 'jar'
+                            if (!mv.version || mv.version == 'unspecified') return
+                            def key = mv.group + ':' + mv.name + ':' + mv.version + ':' + (ra.classifier ?: '') + ':' + ext
+                            if (seen.add(key)) {
+                                allArtifacts.add([group: mv.group, artifact: mv.name, version: mv.version, classifier: ra.classifier, extension: ext, scope: 'buildscriptClasspath'])
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    rootProject.task('flutter2nixDeps') {
+        dependsOn collectTasks
+        doLast {
+            // Capture .pom and .module metadata files for every resolved module version.
+            // resolvedArtifacts only yields JARs/AARs; Gradle fetches POMs internally as
+            // metadata but never surfaces them as resolved artifacts. Without real POMs in
+            // the offline Maven repo, buildMavenRepo generates empty synthetic stubs which
+            // lose all transitive dependency declarations — breaking offline resolution.
+            def seenModules = new HashSet()
+            new ArrayList(allArtifacts).each { art ->
+                def modKey = art.group + ':' + art.artifact + ':' + art.version
+                if (!seenModules.add(modKey)) return
+                def artifactDir = new File(gradleHomeDir,
+                    'caches/modules-2/files-2.1/' + art.group + '/' + art.artifact + '/' + art.version)
+                if (!artifactDir.exists()) return
+                ['pom', 'module'].each { ext ->
+                    def filename = art.artifact + '-' + art.version + '.' + ext
+                    def exists = artifactDir.listFiles()?.any { hashDir ->
+                        hashDir.isDirectory() && new File(hashDir, filename).exists()
+                    }
+                    def key = modKey + '::' + ext
+                    if (exists && seen.add(key)) {
+                        allArtifacts.add([group: art.group, artifact: art.artifact,
+                            version: art.version, classifier: null, extension: ext,
+                            scope: 'metadata'])
+                    }
+                }
+            }
+            // Capture plugin marker POMs (*.gradle.plugin) from the Gradle cache.
+            // These POM-only stubs are needed for `plugins { id("...") version "..." }` resolution
+            // and are never surfaced in resolvedArtifacts.
+            def filesBase = new File(gradleHomeDir, 'caches/modules-2/files-2.1')
+            if (filesBase.exists()) {
+                filesBase.eachDir { gDir ->
+                    gDir.eachDir { aDir ->
+                        if (aDir.name.endsWith('.gradle.plugin')) {
+                            aDir.eachDir { vDir ->
+                                vDir.eachDir { hDir ->
+                                    def pom = new File(hDir, aDir.name + '-' + vDir.name + '.pom')
+                                    if (pom.exists()) {
+                                        def k = gDir.name + ':' + aDir.name + ':' + vDir.name + '::pom'
+                                        if (seen.add(k)) {
+                                            allArtifacts.add([group: gDir.name, artifact: aDir.name,
+                                                version: vDir.name, classifier: null,
+                                                extension: 'pom', scope: 'pluginMarker'])
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Recursively discover parent POMs referenced by captured POM files.
+            // Gradle downloads parent POMs to parse the dependency graph (e.g. gson-parent,
+            // kotlin-gradle-plugins-bom) but they never appear in resolvedArtifacts.
+            // Without them in the offline Maven repo Gradle fails: "Could not parse POM".
+            def extractTagText = { String block, String tag ->
+                def open = '<' + tag + '>'
+                def close = '</' + tag + '>'
+                def s = block.indexOf(open)
+                def e = block.indexOf(close)
+                if (s < 0 || e < 0) return null
+                block.substring(s + open.length(), e).trim()
+            }
+            def processedParents = new HashSet()
+            def parentQueue = new ArrayDeque(allArtifacts.findAll { it.extension == 'pom' })
+            while (!parentQueue.isEmpty()) {
+                def art = parentQueue.poll()
+                def pomKey = art.group + ':' + art.artifact + ':' + art.version
+                if (!processedParents.add(pomKey)) continue
+                def artDir = new File(gradleHomeDir,
+                    'caches/modules-2/files-2.1/' + art.group + '/' + art.artifact + '/' + art.version)
+                if (!artDir.exists()) continue
+                def pomFile = null
+                artDir.listFiles()?.each { hDir ->
+                    if (hDir.isDirectory()) {
+                        def candidate = new File(hDir, art.artifact + '-' + art.version + '.pom')
+                        if (candidate.exists()) pomFile = candidate
+                    }
+                }
+                if (pomFile == null) continue
+                def content = pomFile.text
+                def parentStart = content.indexOf('<parent>')
+                def parentEnd = content.indexOf('</parent>')
+                if (parentStart < 0 || parentEnd < 0) continue
+                def parentBlock = content.substring(parentStart, parentEnd + '</parent>'.length())
+                def pGroup = extractTagText(parentBlock, 'groupId')
+                def pArtifact = extractTagText(parentBlock, 'artifactId')
+                def pVersion = extractTagText(parentBlock, 'version')
+                if (!pGroup || !pArtifact || !pVersion) continue
+                def pKey = pGroup + ':' + pArtifact + ':' + pVersion + '::pom'
+                if (seen.add(pKey)) {
+                    def parentEntry = [group: pGroup, artifact: pArtifact, version: pVersion,
+                        classifier: null, extension: 'pom', scope: 'parentPom']
+                    allArtifacts.add(parentEntry)
+                    parentQueue.add(parentEntry)
+                }
+            }
+            println 'FLUTTER2NIX_DEPS:' + groovy.json.JsonOutput.toJson(allArtifacts)
+        }
+    }
+}

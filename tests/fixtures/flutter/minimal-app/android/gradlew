@@ -1,0 +1,4 @@
+#!/bin/sh
+# Gradle wrapper script — replaced at Nix build time by gradle2nix-lib.nix
+# to use pkgs.gradle_8 directly (avoids network download in Nix sandbox).
+exec "$(dirname "$0")/gradle/wrapper/gradle-wrapper.jar" "$@"

@@ -7,7 +7,6 @@ plugins {
 android {
     namespace = "com.example.minimal_app"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
@@ -30,6 +29,13 @@ android {
         release {
             signingConfig = signingConfigs.getByName("debug")
         }
+    }
+
+    lint {
+        // lintVitalRelease resolves com.android.tools.lint:lint-gradle at task
+        // execution time via a detached configuration — unavailable offline and
+        // out of scope for the offline-build E2E.
+        checkReleaseBuilds = false
     }
 }
 

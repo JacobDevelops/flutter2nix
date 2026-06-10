@@ -104,10 +104,6 @@ Options:
 The flutter2nix flake exports two library functions for consuming gradle2nix lockfiles in
 your own flakes.
 
-> **Note:** In Phase 2 these functions return placeholder attribute sets (`_phase5Placeholder = true`).
-> Real build derivations (that invoke `gradle assembleRelease` etc.) are planned for Phase 5.
-> You can write and commit your Nix integration code now — it evaluates without errors and
-> will build correctly once Phase 5 ships.
 
 ```nix
 # flake.nix
@@ -122,32 +118,29 @@ your own flakes.
     flake-utils.lib.eachDefaultSystem (system: let
       pkgs = nixpkgs.legacyPackages.${system};
     in {
+      # Full derivation: runs `gradle assembleRelease` offline and copies the
+      # release APK/AAB to $out. pkgs must allow unfree + accept the Android SDK
+      # license (android_sdk.accept_license = true).
       packages.myAndroidApp = flutter2nix.lib.buildAndroidApp {
+        inherit pkgs;
         name = "my-app";
-        projectDir = ./android;
+        src = ./.;
         lockFile = ./android/gradle2nix.lock;
+        gradleTask = "assembleRelease";        # default
+        androidSdk = (pkgs.androidenv.composeAndroidPackages {
+          buildToolsVersions = [ "34.0.0" ];
+          platformVersions = [ "34" ];
+        }).androidsdk;
       };
 
-      packages.myGradleLib = flutter2nix.lib.buildGradleProject {
-        projectDir = ./;
+      # Build-helper attrset for composing your own derivation:
+      # { mavenRepo, initScript, buildInputs, baseGradleFlags }
+      myGradleHelpers = flutter2nix.lib.buildGradleProject {
+        inherit pkgs;
         lockFile = ./gradle2nix.lock;
       };
     });
 }
-```
-
-### Checking the Phase 5 placeholder sentinel
-
-If you need conditional logic while Phase 5 is not yet shipped:
-
-```nix
-let
-  result = flutter2nix.lib.buildGradleProject { projectDir = ./; };
-  isPlaceholder = result._phase5Placeholder or false;
-in
-  if isPlaceholder
-  then builtins.trace "gradle2nix Phase 5 not yet released; skipping real build" pkgs.emptyDirectory
-  else result
 ```
 
 ### CI workflow
@@ -197,8 +190,3 @@ gradle2nix lock --project-dir ./android
 
 Run `gradle2nix check` locally. If it exits 0, CI may be using a different Gradle version.
 Pin the Gradle wrapper version in `gradle/wrapper/gradle-wrapper.properties`.
-
-### `_phase5Placeholder = true` in evaluation output
-
-This is expected in Phase 2. The library functions return attribute sets rather than real
-build derivations. See the Integration section above for details and the sentinel check pattern.

@@ -22,56 +22,11 @@ data class TapiArtifact(
 
 private val lenientJson = Json { ignoreUnknownKeys = true }
 
-private val INIT_SCRIPT = """
-gradle.projectsEvaluated {
-    def seen = Collections.synchronizedSet(new HashSet())
-    def allArtifacts = Collections.synchronizedList(new ArrayList())
-    def gradleHomeDir = gradle.gradleUserHomeDir
-
-    def collectTasks = rootProject.allprojects.collect { proj ->
-        proj.task('flutter2nixDepsCollect') {
-            doLast {
-                proj.configurations.names.toList().each { configName ->
-                    if (!configName.endsWith('RuntimeClasspath') && !configName.endsWith('CompileClasspath')) {
-                        return
-                    }
-                    try {
-                        def config = proj.configurations.getByName(configName)
-                        if (config.canBeResolved) {
-                            config.resolvedConfiguration.resolvedArtifacts.each { ra ->
-                                def mv = ra.moduleVersion.id
-                                def declaredExt = ra.extension ?: 'jar'
-                                def realExt = declaredExt
-                                if (declaredExt == 'jar') {
-                                    def artifactDir = new File(gradleHomeDir, 'caches/modules-2/files-2.1/' + mv.group + '/' + mv.name + '/' + mv.version)
-                                    if (artifactDir.exists()) {
-                                        def aarName = mv.name + '-' + mv.version + '.aar'
-                                        def hasAar = artifactDir.listFiles()?.any { hashDir ->
-                                            hashDir.isDirectory() && new File(hashDir, aarName).exists()
-                                        }
-                                        if (hasAar) realExt = 'aar'
-                                    }
-                                }
-                                def key = mv.group + ':' + mv.name + ':' + mv.version + ':' + (ra.classifier ?: '') + ':' + realExt
-                                if (seen.add(key)) {
-                                    allArtifacts.add([group: mv.group, artifact: mv.name, version: mv.version, classifier: ra.classifier, extension: realExt, scope: configName])
-                                }
-                            }
-                        }
-                    } catch (Exception ignored) {}
-                }
-            }
-        }
-    }
-
-    rootProject.task('flutter2nixDeps') {
-        dependsOn collectTasks
-        doLast {
-            println 'FLUTTER2NIX_DEPS:' + groovy.json.JsonOutput.toJson(allArtifacts)
-        }
-    }
-}
-""".trimIndent()
+// The Gradle init script lives in src/main/resources so it gets Groovy syntax
+// highlighting and is maintainable as a standalone file. It is bundled into the
+// fat JAR by the jar task (sourceSets.main.output includes processed resources).
+private val INIT_SCRIPT: String =
+    object {}.javaClass.getResource("/flutter2nix-init.gradle")!!.readText()
 
 fun main(args: Array<String>) {
     val projectDir = File(if (args.isNotEmpty()) args[0] else ".")
@@ -81,16 +36,58 @@ fun main(args: Array<String>) {
         System.exit(1)
     }
 
+    // --init-script (passed via TAPI withArguments) only applies to the top-level build.
+    // Plugin builds loaded via pluginManagement { includeBuild } use a separate Gradle
+    // instance and never see --init-script. Files in $GRADLE_USER_HOME/init.d/ ARE applied
+    // to all builds in the composite including plugin builds.
+    // We create a temp home that symlinks the real caches/wrapper (so existing artifacts and
+    // distributions are reused) and writes our init script into its init.d/.
+    val realGradleHome = File(
+        System.getenv("GRADLE_USER_HOME")
+            ?: (System.getProperty("user.home") + "/.gradle")
+    )
+    val tempGradleHome = Files.createTempDirectory("flutter2nix-gradle-home-").toFile()
+    val kgpPersistentDir = Files.createTempDirectory("flutter2nix-kgp-").toFile()
+
+    var exitCode = 0
     try {
+        // Reuse the existing Gradle distribution and Maven artifact cache.
+        for (sharedDir in listOf("caches", "wrapper")) {
+            val target = File(realGradleHome, sharedDir)
+            if (target.exists()) {
+                Files.createSymbolicLink(
+                    File(tempGradleHome, sharedDir).toPath(),
+                    target.toPath()
+                )
+            }
+        }
+        val initDir = File(tempGradleHome, "init.d")
+        initDir.mkdirs()
+        File(initDir, "flutter2nix.gradle").writeText(INIT_SCRIPT)
+
+        // Write kotlin.project.persistent.dir to gradle.properties so that all builds
+        // in the composite (including flutter_tools) read the writable temp path via
+        // providers.gradleProperty() even when the init script's beforeSettings hook
+        // fires after GradleProperties has been snapshotted.
+        File(tempGradleHome, "gradle.properties").writeText(
+            "kotlin.project.persistent.dir=${kgpPersistentDir.absolutePath}\n" +
+            // Run Kotlin compiler in-process (no separate daemon) to avoid "daemon has
+            // terminated unexpectedly" failures in Nix sandbox and dev-shell environments
+            // where the Kotlin compile daemon exits immediately after saying "ready".
+            // KGP accepts only lowercase hyphenated values: daemon | in-process | out-of-process.
+            "kotlin.compiler.execution.strategy=in-process\n"
+        )
+
         val connection = GradleConnector.newConnector()
             .forProjectDirectory(projectDir)
+            .useGradleUserHomeDir(tempGradleHome)
             .connect()
 
         connection.use { conn ->
             val buildEnv = conn.getModel(BuildEnvironment::class.java)
             val gradleVersion = buildEnv.gradle.gradleVersion
 
-            val initArtifacts = tryInitScript(conn)
+            val initArtifacts = tryInitScript(conn, kgpPersistentDir)
 
             if (initArtifacts != null && initArtifacts.isNotEmpty()) {
                 outputSentinels(gradleVersion, initArtifacts)
@@ -101,7 +98,7 @@ fun main(args: Array<String>) {
                 System.err.println("Init script produced zero artifacts; attempting IdeaProject fallback")
             }
 
-            val ideaArtifacts = tryIdeaProject(conn)
+            val ideaArtifacts = tryIdeaProject(conn, kgpPersistentDir)
 
             if (ideaArtifacts.isEmpty()) {
                 System.err.println("Init-script: 0; IdeaProject: 0. Expected for pure-Java. Check Gradle setup if expecting Android dependencies.")
@@ -112,18 +109,39 @@ fun main(args: Array<String>) {
     } catch (e: Exception) {
         System.err.println("TapiShim error: ${e.message}")
         e.printStackTrace(System.err)
-        System.exit(1)
+        // exitProcess would skip the finally block; record the failure and exit after cleanup.
+        exitCode = 1
+    } finally {
+        // Delete tempGradleHome without following symlinks: it contains a `caches` symlink
+        // pointing to the real ~/.gradle/caches, and File.deleteRecursively() follows symlinks,
+        // which would wipe the user's Gradle module cache. Per-entry runCatching: one
+        // undeletable file (e.g. still held by a daemon) must not abort the rest.
+        runCatching {
+            Files.walk(tempGradleHome.toPath())
+                .sorted(Comparator.reverseOrder())
+                .forEach { runCatching { Files.delete(it) } }
+        }
+        kgpPersistentDir.deleteRecursively()
+    }
+    if (exitCode != 0) {
+        kotlin.system.exitProcess(exitCode)
     }
 }
 
-private fun tryInitScript(conn: ProjectConnection): List<TapiArtifact>? {
-    val tempFile = Files.createTempFile("flutter2nix-init-", ".gradle").toFile()
+private fun tryInitScript(conn: ProjectConnection, kgpPersistentDir: File): List<TapiArtifact>? {
+    val projectCacheDir = Files.createTempDirectory("flutter2nix-gradle-cache-").toFile()
     return try {
-        tempFile.writeText(INIT_SCRIPT)
         val stdout = ByteArrayOutputStream()
         conn.newBuild()
             .forTasks(":flutter2nixDeps")
-            .withArguments("--init-script", tempFile.absolutePath, "--quiet", "--no-configuration-cache")
+            .withArguments(
+                "--quiet",
+                "--no-configuration-cache",
+                "--project-cache-dir", projectCacheDir.absolutePath,
+                // Belt-and-suspenders: -P propagates to all included builds and sets the
+                // property via startParameter before GradleProperties is snapshotted.
+                "-Pkotlin.project.persistent.dir=${kgpPersistentDir.absolutePath}",
+            )
             .setStandardOutput(stdout)
             .setStandardError(System.err)
             .run()
@@ -132,24 +150,32 @@ private fun tryInitScript(conn: ProjectConnection): List<TapiArtifact>? {
         System.err.println("Init script approach failed: ${e.message}")
         null
     } finally {
-        tempFile.delete()
+        projectCacheDir.deleteRecursively()
     }
 }
 
 private fun parseSentinelDeps(output: String): List<TapiArtifact> {
     val re = Regex("""^FLUTTER2NIX_DEPS:(.*)$""", RegexOption.MULTILINE)
-    val match = re.find(output) ?: return emptyList()
-    return try {
-        lenientJson.decodeFromString<List<TapiArtifact>>(match.groupValues[1])
-    } catch (e: Exception) {
-        System.err.println("Failed to parse sentinel JSON: ${e.message}")
-        emptyList()
+    val seen = mutableSetOf<String>()
+    val merged = mutableListOf<TapiArtifact>()
+    for (match in re.findAll(output)) {
+        try {
+            val artifacts = lenientJson.decodeFromString<List<TapiArtifact>>(match.groupValues[1])
+            for (a in artifacts) {
+                val key = "${a.group}:${a.artifact}:${a.version}:${a.classifier}:${a.extension}"
+                if (seen.add(key)) merged.add(a)
+            }
+        } catch (e: Exception) {
+            System.err.println("Failed to parse sentinel JSON: ${e.message}")
+        }
     }
+    return merged
 }
 
-private fun tryIdeaProject(conn: ProjectConnection): List<TapiArtifact> {
+private fun tryIdeaProject(conn: ProjectConnection, kgpPersistentDir: File): List<TapiArtifact> {
     val ideaProject = conn.model(IdeaProject::class.java)
-        .withArguments("--no-configuration-cache", "--quiet")
+        .withArguments("--no-configuration-cache", "--quiet",
+            "-Pkotlin.project.persistent.dir=${kgpPersistentDir.absolutePath}")
         .get()
 
     val seen = mutableSetOf<String>()
@@ -159,6 +185,7 @@ private fun tryIdeaProject(conn: ProjectConnection): List<TapiArtifact> {
         module.dependencies.forEach depLoop@{ dep ->
             if (dep is IdeaSingleEntryLibraryDependency) {
                 val mv = dep.gradleModuleVersion ?: return@depLoop
+                if (mv.version.isNullOrEmpty() || mv.version == "unspecified") return@depLoop
                 val file = dep.file ?: return@depLoop
 
                 val extension = file.extension.ifEmpty { "jar" }

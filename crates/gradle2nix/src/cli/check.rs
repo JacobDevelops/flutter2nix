@@ -6,6 +6,7 @@ pub struct CheckCommand {
     pub repositories: Option<Vec<String>>,
     /// Local Maven repo directory for sha256 lookup (used in tests; None in production).
     pub gradle_cache_dir: Option<PathBuf>,
+    pub gradle_user_home: Option<PathBuf>,
     pub timeout_secs: u64,
 }
 
@@ -16,6 +17,7 @@ pub async fn run(cmd: CheckCommand) -> anyhow::Result<()> {
         &cmd.gradle_dir,
         repos,
         cmd.gradle_cache_dir.as_deref(),
+        cmd.gradle_user_home.as_deref(),
         cmd.timeout_secs,
     )
     .await?;

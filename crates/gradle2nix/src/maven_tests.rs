@@ -454,3 +454,28 @@ async fn test_resolve_artifacts_batch_20_under_2s() {
     );
     eprintln!("Performance gate: 20 artifacts resolved in {}ms", elapsed.as_millis());
 }
+
+#[test]
+fn discovery_gradle_home_hermetic_mode_disables_detection() {
+    // With an explicit local cache dir (test/hermetic mode), the discovery phases must
+    // NOT fall back to the developer machine's ~/.gradle — whatever happens to be cached
+    // there would leak into lock output and make test runs non-deterministic.
+    let config = MavenResolverConfig {
+        local_cache_dir: Some(PathBuf::from("/hermetic/stub")),
+        ..MavenResolverConfig::default()
+    };
+    assert_eq!(config.discovery_gradle_home(), None);
+}
+
+#[test]
+fn discovery_gradle_home_explicit_home_wins() {
+    let config = MavenResolverConfig {
+        local_cache_dir: Some(PathBuf::from("/hermetic/stub")),
+        gradle_user_home: Some(PathBuf::from("/custom/gradle-home")),
+        ..MavenResolverConfig::default()
+    };
+    assert_eq!(
+        config.discovery_gradle_home(),
+        Some(PathBuf::from("/custom/gradle-home"))
+    );
+}

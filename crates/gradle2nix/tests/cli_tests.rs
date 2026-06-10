@@ -10,6 +10,7 @@ async fn test_cli_lock_full_pipeline() {
         output: Some(tmp.path().to_path_buf()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_user_home: None,
         timeout_secs: 60,
     })
     .await
@@ -31,6 +32,7 @@ async fn test_cli_check_fresh_lockfile() {
         lockfile: Some(PathBuf::from("tests/fixtures/lockfiles/simple-2-deps.lock")),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_user_home: None,
         timeout_secs: 60,
     })
     .await;
@@ -45,6 +47,7 @@ async fn test_cli_check_stale_lockfile() {
         lockfile: Some(PathBuf::from("tests/fixtures/lockfiles/simple-2-deps-stale.lock")),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_user_home: None,
         timeout_secs: 60,
     })
     .await;
@@ -97,6 +100,7 @@ async fn test_lock_output_flag_writes_to_specified_path() {
         output: Some(output_path.clone()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_user_home: None,
         timeout_secs: 60,
     })
     .await
@@ -138,6 +142,7 @@ async fn test_e2e_lock_check_generate_full_pipeline() {
         output: Some(lockfile_path.clone()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_user_home: None,
         timeout_secs: 60,
     })
     .await
@@ -152,6 +157,7 @@ async fn test_e2e_lock_check_generate_full_pipeline() {
         lockfile: Some(lockfile_path.clone()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_user_home: None,
         timeout_secs: 60,
     })
     .await;
@@ -211,6 +217,7 @@ async fn test_e2e_nix_eval_generated_output() {
         output: Some(lockfile_path.clone()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_user_home: None,
         timeout_secs: 60,
     })
     .await
@@ -259,6 +266,7 @@ async fn test_e2e_real_gradle_no_mocks() {
         output: Some(tmp.path().to_path_buf()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: None,
+        gradle_user_home: None,
         timeout_secs: 300,
     })
     .await;
@@ -307,6 +315,7 @@ async fn test_cli_lock_android_fixture() {
             "https://storage.googleapis.com/download.flutter.io".to_string(),
         ]),
         gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/android-maven-stub")),
+        gradle_user_home: None,
         timeout_secs: 60,
     })
     .await;
@@ -367,6 +376,7 @@ async fn test_e2e_gradle9_no_mocks() {
         output: Some(tmp.path().to_path_buf()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: None,
+        gradle_user_home: None,
         timeout_secs: 300,
     })
     .await;
@@ -396,4 +406,97 @@ async fn test_e2e_gradle9_no_mocks() {
             "sha256 must be hex, got: {sha256}"
         );
     }
+}
+
+/// The lock command must refuse to write a lockfile when the TAPI shim reports zero
+/// artifacts (a failed Gradle resolution would otherwise silently erase a good lockfile).
+#[tokio::test]
+async fn test_cli_lock_refuses_empty_artifact_set() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join(".gradle2nix-tapi-output.json"),
+        r#"{ "version": "8.14.4", "artifacts": [], "configurations": [] }"#,
+    )
+    .unwrap();
+    let out_dir = tempfile::tempdir().unwrap();
+    let output = out_dir.path().join("gradle2nix.lock");
+
+    let result = cli::lock::run(cli::lock::LockCommand {
+        gradle_dir: project.path().to_path_buf(),
+        output: Some(output.clone()),
+        repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
+        gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_user_home: None,
+        timeout_secs: 60,
+    })
+    .await;
+
+    let err = result.expect_err("lock must fail when TAPI reports zero artifacts");
+    assert!(
+        err.to_string().contains("0 artifacts"),
+        "error must explain the empty artifact set, got: {err}"
+    );
+    assert!(!output.exists(), "no lockfile may be written on failure");
+}
+
+/// Hermetic coverage for the cache-discovery phases: cached-version scan (6b2),
+/// KMP base artifacts (6c), and AGP aapt2 (6d). The fixture gradle home carries a
+/// cached guava 33.3.1-jre version dir; all sha256 lookups come from the stub repo.
+/// The repository URL is unroutable, so the test also proves no phase needs the network.
+#[tokio::test]
+async fn test_cli_lock_discovery_phases() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+
+    let result = cli::lock::run(cli::lock::LockCommand {
+        gradle_dir: PathBuf::from("tests/fixtures/gradle-projects/android-discovery-app"),
+        output: Some(tmp.path().to_path_buf()),
+        repositories: Some(vec!["http://127.0.0.1:1/".to_string()]),
+        gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/discovery-stub")),
+        gradle_user_home: Some(PathBuf::from("tests/fixtures/gradle-homes/discovery-home")),
+        timeout_secs: 10,
+    })
+    .await;
+    assert!(result.is_ok(), "discovery lock must succeed offline: {:?}", result.unwrap_err());
+
+    let lockfile: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(tmp.path()).unwrap()).unwrap();
+    let nodes = lockfile["nodes"].as_array().expect("lockfile must have a nodes array");
+    let has_node = |name: &str, url_suffix: &str| {
+        nodes.iter().any(|n| {
+            n["name"].as_str() == Some(name)
+                && n["url"].as_str().map(|u| u.ends_with(url_suffix)).unwrap_or(false)
+        })
+    };
+
+    // Cached-version scan: guava 33.3.1-jre exists only in the fixture gradle home —
+    // both its .pom and .module metadata must be added.
+    assert!(
+        has_node("com.google.guava:guava:33.3.1-jre", "guava-33.3.1-jre.pom"),
+        "cached-version scan must add the guava 33.3.1 POM — nodes: {nodes:?}"
+    );
+    assert!(
+        has_node("com.google.guava:guava:33.3.1-jre", "guava-33.3.1-jre.module"),
+        "cached-version scan must add the guava 33.3.1 module metadata — nodes: {nodes:?}"
+    );
+
+    // KMP base artifacts: the -jvm platform artifact must pull in the root
+    // KMP metadata artifact so offline variant selection works.
+    assert!(
+        has_node(
+            "org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3",
+            "kotlinx-serialization-json-1.6.3.module"
+        ),
+        "KMP discovery must add the base artifact module metadata — nodes: {nodes:?}"
+    );
+
+    // AGP aapt2: aapt2-proto in the resolved set signals which co-versioned
+    // linux aapt2 binary the offline build will fetch at task execution time.
+    let aapt2 = nodes.iter().find(|n| {
+        n["name"].as_str() == Some("com.android.tools.build:aapt2:8.6.0-11315950:linux")
+    });
+    assert!(aapt2.is_some(), "aapt2 discovery must add the linux binary — nodes: {nodes:?}");
+    assert!(
+        aapt2.unwrap()["url"].as_str().unwrap_or("").contains("dl.google.com"),
+        "aapt2 must be routed to Google Maven"
+    );
 }

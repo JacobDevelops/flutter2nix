@@ -1,0 +1,71 @@
+// Gradle init script (template) — redirects all repository lookups to the offline
+// Maven repo built from the gradle2nix lockfile. Instantiated by makeInitScript in
+// gradle2nix-lib.nix, which substitutes @mavenRepo@ with the Nix store path.
+
+// Adds the offline Maven repo to any RepositoryHandler (pluginManagement, project,
+// buildscript, dependencyResolutionManagement). metadataSources lists every source so
+// Gradle can resolve from real .module/.pom files and fall back to bare artifacts
+// (synthetic POMs are generated for artifacts whose real POM is unreachable offline).
+def gradle2nixAddOfflineRepo = { repos ->
+    repos.maven {
+        url "file://@mavenRepo@"
+        metadataSources {
+            gradleMetadata()
+            mavenPom()
+            artifact()
+        }
+    }
+}
+
+// beforeSettings: fires BEFORE settings.gradle.kts is evaluated, for both the root
+// build and each included build. This is the correct lifecycle point to inject
+// pluginManagement.repositories so plugin resolution uses the offline Maven repo.
+beforeSettings { settings ->
+    gradle2nixAddOfflineRepo(settings.pluginManagement.repositories)
+}
+
+// settingsEvaluated: fires AFTER settings.gradle.kts evaluates. Redundant with
+// beforeSettings for pluginManagement but needed for builds (e.g. flutter_tools overlay)
+// whose settings are generated at runtime and may run before beforeSettings fires.
+settingsEvaluated { settings ->
+    gradle2nixAddOfflineRepo(settings.pluginManagement.repositories)
+
+    // Builds that centralise repositories at the settings level — e.g. the Flutter
+    // SDK's flutter_tools/gradle included build, which sets
+    // repositoriesMode = FAIL_ON_PROJECT_REPOS — reject project-level repositories
+    // outright. For those builds the offline repo must live in
+    // dependencyResolutionManagement.repositories, and the project-level injection
+    // in projectsLoaded must be skipped (it would fail the build). The flag is
+    // stashed on this build's Gradle instance; each build in a composite has its
+    // own, so included builds are handled independently.
+    def drm = settings.dependencyResolutionManagement
+    def settingsManaged = drm.repositoriesMode.get().name() != 'PREFER_PROJECT'
+    settings.gradle.ext.gradle2nixSettingsManagedRepos = settingsManaged
+    if (settingsManaged || !drm.repositories.isEmpty()) {
+        gradle2nixAddOfflineRepo(drm.repositories)
+    }
+}
+
+// projectsLoaded: fires after all projects are loaded, before build scripts run.
+// Injects the offline repo into both buildscript repositories (for legacy buildscript {}
+// blocks) and project-level repositories (for compile/runtime deps declared via
+// allprojects { repositories { ... } } in build.gradle). Without the latter, projects
+// that declare their own repositories block ignore dependencyResolutionManagement repos.
+// Project-level injection is skipped for builds flagged in settingsEvaluated as
+// settings-managed (FAIL_ON_PROJECT_REPOS / PREFER_SETTINGS) — those resolve via the
+// dependencyResolutionManagement repo injected above, and adding a project repository
+// would fail the build. buildscript repositories are exempt from repositoriesMode.
+gradle.projectsLoaded {
+    def settingsManaged = gradle.ext.has('gradle2nixSettingsManagedRepos') \
+        && gradle.ext.gradle2nixSettingsManagedRepos
+    rootProject.allprojects {
+        gradle2nixAddOfflineRepo(buildscript.repositories)
+        if (!settingsManaged) {
+            gradle2nixAddOfflineRepo(repositories)
+        }
+        configurations.all {
+            resolutionStrategy.cacheChangingModulesFor 0, 'seconds'
+            resolutionStrategy.cacheDynamicVersionsFor 0, 'seconds'
+        }
+    }
+}

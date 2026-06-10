@@ -37,6 +37,11 @@ struct LockArgs {
     #[arg(long)]
     gradle_cache_dir: Option<PathBuf>,
 
+    /// Explicit Gradle user home for the TAPI shim and cache-discovery phases
+    /// (defaults to GRADLE_USER_HOME / ~/.gradle)
+    #[arg(long)]
+    gradle_user_home: Option<PathBuf>,
+
     /// Timeout in seconds for HTTP requests
     #[arg(long, default_value = "60")]
     timeout_secs: u64,
@@ -59,6 +64,11 @@ struct CheckArgs {
     /// Gradle cache directory for local artifact lookups (used in tests)
     #[arg(long)]
     gradle_cache_dir: Option<PathBuf>,
+
+    /// Explicit Gradle user home for the TAPI shim and cache-discovery phases
+    /// (defaults to GRADLE_USER_HOME / ~/.gradle)
+    #[arg(long)]
+    gradle_user_home: Option<PathBuf>,
 
     /// Timeout in seconds for HTTP requests
     #[arg(long, default_value = "60")]
@@ -95,6 +105,7 @@ async fn main() -> anyhow::Result<()> {
                 output: lock_args.output,
                 repositories,
                 gradle_cache_dir: lock_args.gradle_cache_dir,
+                gradle_user_home: lock_args.gradle_user_home,
                 timeout_secs: lock_args.timeout_secs,
             })
             .await
@@ -109,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
                 lockfile: check_args.lockfile,
                 repositories,
                 gradle_cache_dir: check_args.gradle_cache_dir,
+                gradle_user_home: check_args.gradle_user_home,
                 timeout_secs: check_args.timeout_secs,
             })
             .await

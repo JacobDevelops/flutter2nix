@@ -1,0 +1,2 @@
+{"timestamp":"2026-06-10T19:50:00+1000","commit":"4dc78211b206","host":"Jacob-PC x86_64","results":[{"target":"lock","cold_secs":236.1,"warm_secs":225.9},{"target":"gradle-build","cold_secs":21.1,"warm_secs":5.9},{"target":"flutter-build","cold_secs":39.5,"warm_secs":13.5}]}
+{"timestamp":"2026-06-10T19:53:46+1000","commit":"c28540126a05","host":"Jacob-PC x86_64","results":[{"target":"gradle-build","cold_secs":21.4,"warm_secs":5.8}]}

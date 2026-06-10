@@ -16,13 +16,15 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Wall-clock benchmarks (lock / gradle-build / flutter-build), cold + warm
+    Bench(cmd::bench::BenchArgs),
     /// Run nix flake check (or cargo clippy with optional --crate filter)
     Check(cmd::check::CheckArgs),
     /// Build a Nix package: fnx build [target] (default: nix build)
     Build(cmd::build::BuildArgs),
     /// Run cargo tests: fnx test [crate] (default: --workspace)
     Test(cmd::test::TestArgs),
-    /// Generate lockfile via flutter2nix lock (Phase 0: stub)
+    /// Generate gradle2nix lockfile for a Gradle project directory
     Lock(cmd::lock::LockArgs),
     /// Format all Rust code with cargo fmt --all
     Fmt,
@@ -32,6 +34,7 @@ fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     match args.command {
+        Command::Bench(a) => cmd::bench::run(a),
         Command::Check(a) => cmd::check::run(a),
         Command::Build(a) => cmd::build::run(a),
         Command::Test(a) => cmd::test::run(a),

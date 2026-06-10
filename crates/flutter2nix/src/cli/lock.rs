@@ -1,32 +1,38 @@
 use anyhow::Context;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct LockCommand {
     pub project_dir: PathBuf,
     pub output: Option<PathBuf>,
     pub repositories: Option<Vec<String>>,
     pub gradle_cache_dir: Option<PathBuf>,
+    pub gradle_user_home: Option<PathBuf>,
     pub timeout_secs: u64,
 }
 
-pub async fn run(cmd: LockCommand) -> anyhow::Result<()> {
-    let project_dir = &cmd.project_dir;
-
+/// Resolve the project's dependency graph into a FlutterLockfile (in memory).
+/// Shared by `lock::run` (which writes it) and `check::run` (which diffs it).
+pub async fn generate_lockfile(
+    project_dir: &Path,
+    repositories: &[String],
+    gradle_cache_dir: Option<&Path>,
+    gradle_user_home: Option<&Path>,
+    timeout_secs: u64,
+) -> anyhow::Result<crate::lockfile::FlutterLockfile> {
     anyhow::ensure!(
         crate::detect::detect_flutter_project(project_dir),
         "not a Flutter project: pubspec.yaml not found in '{}'",
         project_dir.display()
     );
 
-    let repos = cmd.repositories.as_deref().unwrap_or(&[]);
-
     let android_dir = project_dir.join("android");
     let android_section = if crate::detect::detect_android(project_dir) {
         let graph = gradle2nix::cli::lock::build_dependency_graph(
             &android_dir,
-            repos,
-            cmd.gradle_cache_dir.as_deref(),
-            cmd.timeout_secs,
+            repositories,
+            gradle_cache_dir,
+            gradle_user_home,
+            timeout_secs,
         )
         .await
         .with_context(|| {
@@ -37,11 +43,22 @@ pub async fn run(cmd: LockCommand) -> anyhow::Result<()> {
         None
     };
 
-    let lock = crate::lockfile::FlutterLockfile { android: android_section };
+    Ok(crate::lockfile::FlutterLockfile { android: android_section })
+}
+
+pub async fn run(cmd: LockCommand) -> anyhow::Result<()> {
+    let lock = generate_lockfile(
+        &cmd.project_dir,
+        cmd.repositories.as_deref().unwrap_or(&[]),
+        cmd.gradle_cache_dir.as_deref(),
+        cmd.gradle_user_home.as_deref(),
+        cmd.timeout_secs,
+    )
+    .await?;
 
     let output_path = cmd
         .output
-        .unwrap_or_else(|| project_dir.join("flutter2nix.lock"));
+        .unwrap_or_else(|| cmd.project_dir.join("flutter2nix.lock"));
     crate::lockfile::write_lockfile(&output_path, &lock)
         .with_context(|| format!("writing flutter2nix lockfile to '{}'", output_path.display()))?;
 
