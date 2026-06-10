@@ -21,7 +21,7 @@ nix develop
 cargo check
 
 # Use the fnx dev CLI
-fnx check        # nix flake check
+fnx check        # nix flake check + e2e suite (nix build .#e2e); local-only, not CI
 fnx build        # nix build all packages
 fnx test         # cargo test --workspace
 fnx fmt          # cargo fmt --all

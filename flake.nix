@@ -99,6 +99,40 @@
           includeNDK = true;
           ndkVersions = [ "26.1.10909125" ];
         }).androidsdk;
+
+        # All end-to-end builds in one place. Each entry runs a real gradle/flutter build
+        # against the minimal fixture app — building the derivation IS running the test.
+        # Add a new e2e test here and it is automatically picked up by both `packages.e2e`
+        # (the whole-suite aggregate) and exposed individually under `packages.<name>`.
+        # Deliberately kept OUT of flake `checks`: `nix flake check` runs in CI and these
+        # realise the full Android SDK + NDK + Flutter SDK, which overflows runner disk.
+        # Run them locally with `fnx check` (which builds `.#e2e`) or `nix build .#e2e`.
+        # Linux-only (Android SDK) and gated on the fixture lockfile existing.
+        e2eTests = pkgs.lib.optionalAttrs (
+          pkgs.stdenv.isLinux
+          && builtins.pathExists ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock
+        ) {
+          # Pure Gradle Android build (no Flutter CLI) — isolates Gradle infra from Flutter.
+          # Reuses flutter2nix.lock which already contains AGP 8.6.0 + Kotlin 2.1.0 artifacts.
+          buildAndroidApp-e2e = self.lib.buildAndroidApp {
+            inherit pkgs androidSdk;
+            name = "gradle-android-e2e";
+            src = ./tests/fixtures/gradle/android-minimal-app;
+            lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
+            gradleTask = "assembleRelease";
+          };
+          # Full Flutter appbundle build.
+          buildFlutterAndroidApp-e2e = self.lib.buildFlutterAndroidApp {
+            inherit pkgs androidSdk;
+            name = "flutter-android-e2e";
+            src = ./tests/fixtures/flutter/minimal-app;
+            lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
+          };
+        };
+        # Whole-suite aggregate: `nix build .#e2e` realises every entry in e2eTests.
+        # Empty no-op derivation on non-Linux or when the fixture lockfile is absent.
+        e2eAll = pkgs.linkFarm "e2e-all"
+          (pkgs.lib.mapAttrsToList (name: path: { inherit name path; }) e2eTests);
       in
       {
         devShells.default = pkgs.mkShell {
@@ -138,8 +172,11 @@
           bench-init-script = benchGradle.initScript;
           # iOS orchestration is macOS-only and unreleased (Phase 3).
           ios2nix = pkgs.emptyDirectory;
+          # Whole e2e suite — `nix build .#e2e` (or `fnx check`) runs every e2e test.
+          e2e = e2eAll;
           default = self.packages.${system}.flutter2nix;
-        };
+          # Each e2e test is also exposed individually (e.g. `.#buildFlutterAndroidApp-e2e`).
+        } // e2eTests;
 
         # Checks: use buildRustPackage so Cargo.lock deps are vendored (no network in sandbox)
         checks = {
@@ -236,62 +273,6 @@
               touch $out
             '';
           default = pkgs.runCommand "flake-check-ok" { } "echo ok > $out";
-        }
-        # E2E check: runs flutter build appbundle against a minimal fixture app.
-        # Linux-only (Android SDK) and activated only when the fixture lockfile exists.
-        # To generate the lockfile (local.properties is written automatically by nix develop):
-        #   cargo run -p gradle2nix -- lock \
-        #     --project-dir tests/fixtures/flutter/minimal-app/android \
-        #     --output tests/fixtures/flutter/minimal-app/android/flutter2nix.lock
-        // pkgs.lib.optionalAttrs (
-          pkgs.stdenv.isLinux
-          && builtins.pathExists ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock
-        ) {
-          # Pure Gradle Android build (no Flutter CLI) — isolates Gradle infrastructure from Flutter.
-          # Reuses the flutter2nix.lock which already contains AGP 8.6.0 + Kotlin 2.1.0 artifacts.
-          buildAndroidApp-e2e = self.lib.buildAndroidApp {
-            inherit pkgs;
-            name = "gradle-android-e2e";
-            src = ./tests/fixtures/gradle/android-minimal-app;
-            lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
-            gradleTask = "assembleRelease";
-            # Init script over the committed fixture lockfile (its file:// URL pulls in
-        # the offline Maven repo). Exposed for `fnx bench`, which drives offline
-        # Gradle builds outside the Nix sandbox. Same derivations the e2e checks use.
-        benchGradle = self.lib.buildGradleProject {
-          inherit pkgs;
-          lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
-        };
-        androidSdk = (pkgs.androidenv.composeAndroidPackages {
-              buildToolsVersions = [ "34.0.0" ];
-              platformVersions = [ "34" "36" ];
-              includeCmake = true;
-              cmakeVersions = [ "3.22.1" ];
-              includeNDK = true;
-              ndkVersions = [ "26.1.10909125" ];
-            }).androidsdk;
-          };
-          buildFlutterAndroidApp-e2e = self.lib.buildFlutterAndroidApp {
-            inherit pkgs;
-            name = "flutter-android-e2e";
-            src = ./tests/fixtures/flutter/minimal-app;
-            lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
-            # Init script over the committed fixture lockfile (its file:// URL pulls in
-        # the offline Maven repo). Exposed for `fnx bench`, which drives offline
-        # Gradle builds outside the Nix sandbox. Same derivations the e2e checks use.
-        benchGradle = self.lib.buildGradleProject {
-          inherit pkgs;
-          lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
-        };
-        androidSdk = (pkgs.androidenv.composeAndroidPackages {
-              buildToolsVersions = [ "34.0.0" ];
-              platformVersions = [ "34" "36" ];
-              includeCmake = true;
-              cmakeVersions = [ "3.22.1" ];
-              includeNDK = true;
-              ndkVersions = [ "26.1.10909125" ];
-            }).androidsdk;
-          };
         };
       }
     );
