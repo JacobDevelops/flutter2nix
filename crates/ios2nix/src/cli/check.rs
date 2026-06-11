@@ -46,8 +46,8 @@ pub async fn run(cmd: CheckCommand) -> anyhow::Result<()> {
         .lockfile
         .unwrap_or_else(|| cmd.ios_dir.join("ios2nix.lock"));
 
-    let on_disk = crate::lockfile::read_lockfile(&lockfile_path)?;
-    let diff = crate::lockfile::diff_lockfiles(&on_disk, &fresh);
+    let on_disk = nix_core::lockfile::read_lockfile(&lockfile_path)?;
+    let diff = nix_core::lockfile::diff_lockfiles(&on_disk, &fresh);
 
     if diff.is_empty() {
         Ok(())

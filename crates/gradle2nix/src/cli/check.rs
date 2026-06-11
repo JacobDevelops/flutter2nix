@@ -30,8 +30,8 @@ pub async fn run(cmd: CheckCommand) -> anyhow::Result<()> {
         eprintln!("warning: .json lockfile extension is deprecated; rename to .lock");
     }
 
-    let on_disk = crate::lockfile::read_lockfile(&lockfile_path)?;
-    let diff = crate::lockfile::diff_lockfiles(&on_disk, &fresh);
+    let on_disk = nix_core::lockfile::read_lockfile(&lockfile_path)?;
+    let diff = nix_core::lockfile::diff_lockfiles(&on_disk, &fresh);
 
     if diff.is_empty() {
         Ok(())

@@ -242,7 +242,7 @@ pub async fn run(cmd: LockCommand) -> anyhow::Result<()> {
         .output
         .unwrap_or_else(|| cmd.gradle_dir.join("gradle2nix.lock"));
 
-    crate::lockfile::write_lockfile(&output_path, &graph)
+    nix_core::lockfile::write_lockfile(&output_path, &graph)
         .with_context(|| format!("writing lockfile to '{}'", output_path.display()))?;
 
     println!("Wrote lockfile: {}", output_path.display());

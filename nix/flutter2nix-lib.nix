@@ -142,13 +142,20 @@ let
         ''}
 
         # Build: either unsigned (build) or signed (archive).
+        # Common xcodebuild args are built once to avoid duplication; each branch appends
+        # signing-specific flags and the final action arg.
+        xcodebuild_args=(
+          -workspace "ios/Runner.xcworkspace"
+          -scheme "Runner"
+          -configuration "Release"
+          -destination 'generic/platform=iOS'
+          -derivedDataPath "$NIX_BUILD_TOP/DerivedData"
+        )
+        # NOTE: the sanitized PATH values below must stay in sync with SANITIZED_PATH in crates/ios2nix/src/xcode/env.rs.
+
         ${if signing != null then ''
           "''${sanitized_env[@]}" xcodebuild \
-            -workspace ios/Runner.xcworkspace \
-            -scheme Runner \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath "$NIX_BUILD_TOP/DerivedData" \
+            "''${xcodebuild_args[@]}" \
             DEVELOPMENT_TEAM="${signing.teamId}" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="${signing.identity}" \
@@ -163,15 +170,11 @@ let
             IOS2NIX_KEYCHAIN_PATH="$IOS2NIX_KEYCHAIN_PATH" \
             xcodebuild -exportArchive \
             -archivePath "$NIX_BUILD_TOP/app.xcarchive" \
-            -exportOptionsPlist ${exportOptions} \
+            -exportOptionsPlist "${exportOptions}" \
             -exportPath "$NIX_BUILD_TOP/export"
         '' else ''
           "''${sanitized_env[@]}" xcodebuild \
-            -workspace ios/Runner.xcworkspace \
-            -scheme Runner \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath "$NIX_BUILD_TOP/DerivedData" \
+            "''${xcodebuild_args[@]}" \
             CODE_SIGNING_ALLOWED=NO \
             HOME="$HOME" \
             PATH="$NIX_BUILD_TOP/shims:/usr/bin:/bin:/usr/sbin:/sbin" \
@@ -262,6 +265,8 @@ let
         // lib.optionalAttrs (wantsAndroid && canBuildAndroid) { android = androidDrv; }
         // lib.optionalAttrs (wantsIos && canBuildIos) { ios = iosDrv; };
     in
+    # seq forces _sectionCheck to be evaluated (even though its result is discarded),
+    # ensuring missing lockfile sections throw at eval time rather than being lazily ignored.
     builtins.seq _sectionCheck (
       if result == { }
       then throw "buildFlutterApp: no requested platforms (${lib.concatStringsSep ", " platforms}) can be built on ${pkgs.stdenv.hostPlatform.system}"

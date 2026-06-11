@@ -40,6 +40,7 @@ pub fn resolve_developer_dir(
 /// The PATH forced onto xcodebuild by `sanitized_env` — system dirs only.
 /// Callers that need extra tools visible to script phases (e.g. a codesign
 /// shim) prepend to this rather than relying on the ambient PATH.
+/// NOTE: keep in sync with the sanitized PATH in nix/flutter2nix-lib.nix.
 pub const SANITIZED_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 /// Drop environment variables that must never reach xcodebuild.

@@ -18,3 +18,4 @@ base64 = "0.21"
 
 [dev-dependencies]
 pretty_assertions = "1"
+tempfile = "3"

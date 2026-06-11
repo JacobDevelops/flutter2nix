@@ -21,7 +21,7 @@ pub fn run(cmd: GenerateCommand) -> anyhow::Result<()> {
     let lockfile_path = cmd
         .lockfile
         .unwrap_or_else(|| PathBuf::from("gradle2nix.lock"));
-    let graph = crate::lockfile::read_lockfile(&lockfile_path)?;
+    let graph = nix_core::lockfile::read_lockfile(&lockfile_path)?;
 
     let (fetcher, nix_content) = match cmd.format {
         NixFormat::Inline => {

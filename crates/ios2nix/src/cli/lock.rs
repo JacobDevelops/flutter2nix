@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::cocoapods::{parse_podfile_lock, PodSourceKind};
-use crate::lockfile::write_lockfile;
 use crate::podspec::fetch_podspec;
 use crate::resolve_cache::ResolveCache;
 
@@ -74,18 +73,18 @@ pub async fn build_dependency_graph(
     // source (a git pod does not exist in the CDN spec repos, so it must never
     // go through fetch_podspec); everything else resolves via its podspec.
     let mut git_pods: Vec<(crate::cocoapods::Pod, PodSourceKind)> = Vec::new();
-    let mut cdn_pods: Vec<crate::cocoapods::Pod> = Vec::new();
+    let mut cdn_pods: Vec<(crate::cocoapods::Pod, String)> = Vec::new();
     for pod in &podfile_lock.pods {
-        let root_name = pod.name.split('/').next().unwrap_or(&pod.name);
+        let root_name = pod.name.split('/').next().unwrap_or(&pod.name).to_string();
 
-        if let Some(ext_src) = podfile_lock.external_sources.get(root_name) {
+        if let Some(ext_src) = podfile_lock.external_sources.get(&root_name) {
             if ext_src.path.is_some() {
                 // Path pod — excluded from nodes
                 continue;
             }
         }
 
-        if let Some(co) = podfile_lock.checkout_options.get(root_name) {
+        if let Some(co) = podfile_lock.checkout_options.get(&root_name) {
             let rev = co
                 .commit
                 .clone()
@@ -107,7 +106,7 @@ pub async fn build_dependency_graph(
             continue;
         }
 
-        cdn_pods.push(pod.clone());
+        cdn_pods.push((pod.clone(), root_name));
     }
 
     let third_party_count = git_pods.len() + cdn_pods.len();
@@ -126,11 +125,10 @@ pub async fn build_dependency_graph(
 
     const MAX_CONCURRENCY: usize = 16;
     let resolved_pods: Vec<_> = stream::iter(cdn_pods)
-        .map(|pod| {
+        .map(|(pod, root_name)| {
             let client = &client;
             let spec_repos = &spec_repos_vec;
             async move {
-                let root_name = pod.name.split('/').next().unwrap_or(&pod.name).to_string();
                 let result = fetch_podspec(&root_name, &pod.version, spec_repos, client).await;
                 (pod, result)
             }
@@ -311,7 +309,7 @@ pub async fn run(cmd: LockCommand) -> anyhow::Result<()> {
     let output_path = cmd
         .output
         .unwrap_or_else(|| cmd.ios_dir.join("ios2nix.lock"));
-    write_lockfile(&output_path, &graph)?;
+    nix_core::lockfile::write_lockfile(&output_path, &graph)?;
 
     println!("Wrote lockfile: {}", output_path.display());
     Ok(())

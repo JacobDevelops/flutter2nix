@@ -131,9 +131,9 @@ let
           env -i HOME="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
             IOS2NIX_KEYCHAIN_PATH="$IOS2NIX_KEYCHAIN_PATH" \
             xcodebuild archive \
-            -workspace ${workspace} \
-            -scheme ${scheme} \
-            -configuration ${configuration} \
+            -workspace "${workspace}" \
+            -scheme "${scheme}" \
+            -configuration "${configuration}" \
             -archivePath "$TMPDIR/app.xcarchive" \
             -destination 'generic/platform=iOS' \
             DEVELOPMENT_TEAM="${signing.teamId}" \
@@ -144,9 +144,9 @@ let
         '' else ''
           env -i HOME="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
             xcodebuild archive \
-            -workspace ${workspace} \
-            -scheme ${scheme} \
-            -configuration ${configuration} \
+            -workspace "${workspace}" \
+            -scheme "${scheme}" \
+            -configuration "${configuration}" \
             -archivePath "$TMPDIR/app.xcarchive" \
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO
@@ -159,7 +159,7 @@ let
           ${lib.optionalString (signing != null) ''IOS2NIX_KEYCHAIN_PATH="$IOS2NIX_KEYCHAIN_PATH"''} \
           xcodebuild -exportArchive \
           -archivePath "$TMPDIR/app.xcarchive" \
-          -exportOptionsPlist ${exportOptions} \
+          -exportOptionsPlist "${exportOptions}" \
           -exportPath "$TMPDIR/export" ${lib.optionalString (signing == null) "|| true"}
 
         runHook postBuild

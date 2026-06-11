@@ -341,6 +341,19 @@ fn test_cli_flutter_e2e_to_signed_ipa() {
             profile = signing.profile.name,
         ),
     );
+    assert_ne!(
+        stamped, pbxproj_content,
+        "pbxproj stamping pattern did not match — fixture drifted?"
+    );
+    assert!(
+        stamped.contains("CODE_SIGN_STYLE = Manual"),
+        "CODE_SIGN_STYLE not found in stamped pbxproj"
+    );
+    assert!(
+        stamped.contains(&signing.profile.bundle_id),
+        "bundle_id '{}' not found in stamped pbxproj",
+        signing.profile.bundle_id
+    );
     std::fs::write(&pbxproj_path, stamped).expect("failed to write stamped project.pbxproj");
 
     // flutter assemble copies Flutter.framework out of the Flutter SDK cache and
