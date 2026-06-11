@@ -11,6 +11,7 @@
 result
 result-*
 .direnv/
+.devenv/
 
 # IDEs
 .vscode/

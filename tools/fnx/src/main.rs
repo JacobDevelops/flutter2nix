@@ -28,6 +28,8 @@ enum Command {
     Lock(cmd::lock::LockArgs),
     /// Format all Rust code with cargo fmt --all
     Fmt,
+    /// Enter the devenv development shell (wraps `devenv shell`)
+    Shell,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -40,5 +42,6 @@ fn main() -> anyhow::Result<()> {
         Command::Test(a) => cmd::test::run(a),
         Command::Lock(a) => cmd::lock::run(a),
         Command::Fmt => cmd::fmt::run(),
+        Command::Shell => cmd::shell::run(),
     }
 }

@@ -135,37 +135,6 @@
           (pkgs.lib.mapAttrsToList (name: path: { inherit name path; }) e2eTests);
       in
       {
-        devShells.default = pkgs.mkShell {
-          nativeBuildInputs = sharedNativeBuildInputs;
-          buildInputs = sharedBuildInputs ++ [
-            rust.toolchain
-            pkgs.nixpkgs-fmt
-            # fnx as a cargo-run wrapper: always built from the current worktree.
-            # The nix-built fnx package went stale whenever its source changed
-            # after shell entry (until the next direnv reload).
-            (pkgs.writeShellScriptBin "fnx" ''exec cargo run -q -p fnx -- "$@"'')
-            pkgs.flutter
-            pkgs.jdk17
-            pkgs.gradle_8
-            androidSdk
-          ];
-          shellHook = ''
-            export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:$LD_LIBRARY_PATH"
-            # The LD_LIBRARY_PATH above leaks Nix's OpenSSL (and its glibc 2.42)
-            # into every child process. When git/jj shell out to the system
-            # /usr/bin/ssh for pushes, ssh picks up the Nix libs and dies with
-            # `GLIBC_ABI_DT_X86_64_PLT not found`. Run ssh with a clean env so it
-            # uses the system glibc.
-            export GIT_SSH_COMMAND='env -u LD_LIBRARY_PATH ssh'
-            export ANDROID_HOME="${androidSdk}/libexec/android-sdk"
-            # Auto-write local.properties so Gradle can find the Flutter SDK and Android SDK.
-            # This file is gitignored and must point at the SDKs on the current machine.
-            local_props="tests/fixtures/flutter/minimal-app/android/local.properties"
-            mkdir -p "$(dirname "$local_props")"
-            printf "flutter.sdk=${pkgs.flutter}\nsdk.dir=${androidSdk}/libexec/android-sdk\n" > "$local_props"
-          '';
-        };
-
         packages = {
           inherit fnx tapi-shim-jar gradle2nix;
           flutter2nix = flutter2nix-cli;
