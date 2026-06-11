@@ -60,6 +60,7 @@
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [ "-p" "gradle2nix" ];
+          cargoTestFlags = [ "-p" "gradle2nix" ];
           nativeBuildInputs = sharedNativeBuildInputs;
           buildInputs = sharedBuildInputs;
           # Place the JAR where include_bytes! expects it before cargo build runs.
@@ -74,6 +75,7 @@
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [ "-p" "flutter2nix" ];
+          cargoTestFlags = [ "-p" "flutter2nix" ];
           nativeBuildInputs = sharedNativeBuildInputs;
           buildInputs = sharedBuildInputs;
           # flutter2nix links the gradle2nix lib, which embeds the TAPI shim JAR.
@@ -88,6 +90,10 @@
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [ "-p" "ios2nix" ];
+          # Lib tests only — the cli_tests integration suite needs real
+          # xcodebuild/signing material (it is #[ignore]-gated and run by
+          # fnx check); keychain tests self-skip when `security` is absent.
+          cargoTestFlags = [ "-p" "ios2nix" "--lib" ];
           nativeBuildInputs = sharedNativeBuildInputs;
           buildInputs = sharedBuildInputs;
           meta.platforms = pkgs.lib.platforms.darwin;

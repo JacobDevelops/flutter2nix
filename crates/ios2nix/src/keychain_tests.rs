@@ -1,9 +1,23 @@
 #[allow(unused_imports)]
 use super::*;
 
+/// The `security` CLI lives in /usr/bin, which the Nix build sandbox does not
+/// expose — keychain tests can only run as a real user (dev shell, fnx check).
+#[cfg(target_os = "macos")]
+fn security_available() -> bool {
+    std::process::Command::new("security")
+        .arg("help")
+        .output()
+        .is_ok()
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn test_create_temp_keychain_success() {
+    if !security_available() {
+        eprintln!("security CLI unavailable (Nix sandbox) — skipping");
+        return;
+    }
     let result = TempKeychain::create("test-password");
     assert!(result.is_ok(), "should create temp keychain");
     let kc = result.unwrap();
@@ -13,6 +27,10 @@ fn test_create_temp_keychain_success() {
 #[cfg(target_os = "macos")]
 #[test]
 fn test_create_temp_keychain_cleanup() {
+    if !security_available() {
+        eprintln!("security CLI unavailable (Nix sandbox) — skipping");
+        return;
+    }
     let kc_path = {
         let result = TempKeychain::create("test-password");
         assert!(result.is_ok());
@@ -28,6 +46,10 @@ fn test_create_temp_keychain_cleanup() {
 #[cfg(target_os = "macos")]
 #[test]
 fn test_import_certificate_to_keychain_valid() {
+    if !security_available() {
+        eprintln!("security CLI unavailable (Nix sandbox) — skipping");
+        return;
+    }
     // Generate a self-signed cert + key at runtime
     let tmpdir = tempfile::TempDir::new().expect("failed to create tempdir");
     let key_file = tmpdir.path().join("test_key.pem");
@@ -85,6 +107,10 @@ fn test_import_certificate_to_keychain_valid() {
 #[cfg(target_os = "macos")]
 #[test]
 fn test_import_certificate_to_keychain_invalid_format() {
+    if !security_available() {
+        eprintln!("security CLI unavailable (Nix sandbox) — skipping");
+        return;
+    }
     let tmpdir = tempfile::TempDir::new().expect("failed to create tempdir");
     let invalid_file = tmpdir.path().join("not-a-cert.p12");
     std::fs::write(&invalid_file, b"not a p12").expect("failed to write file");
