@@ -58,5 +58,8 @@ fn persist_skips_write_when_clean() {
     let cache = ResolveCache::open(dir.path());
     cache.persist().unwrap();
     // Nothing stored, nothing dirty — no file should have been created.
-    assert!(!dir.path().join("caches/gradle2nix/resolve-cache.json").exists());
+    assert!(!dir
+        .path()
+        .join("caches/gradle2nix/resolve-cache.json")
+        .exists());
 }

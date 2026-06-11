@@ -191,10 +191,23 @@ Plans 2 and 3** — a missing Linux arm fails the gate and blocks merge.
 ---
 
 ## 4. ADR (consensus-approved)
-- **Decision:** lib+bin Rust crate mirroring gradle2nix; **podspec-driven resolution (B), contingent
-  on the Phase -1 spike**; **single-source `ios.nodes`**; **strict Linux-compilability via cfg-gating
-  + Phase 0 blocking gates**; **explicitly impure `buildIOSApp`**; signing modeled in full (Plan 3),
-  not stubbed.
+
+> **Phase -1 OUTCOME (2026-06-11, macOS 26.4.1 / Xcode 26.3 / CocoaPods 1.16.2):** spike executed —
+> **Option B CONFIRMED**. Offline `pod install --no-repo-update` under poisoned proxies reconstructed
+> all 22 third-party pods (subspecs, binary xcframeworks, git pod, path pods excluded) from
+> pre-seeded caches, Manifest.lock identical, and the offline `Pods.xcodeproj` **built for the
+> device SDK with zero network**. **Phase -1.5: unsigned export = NOT feasible** (empirical:
+> unsigned archive succeeds; `-exportArchive` fails `No Team Found in Archive`; Xcode 26 renames
+> method `development`→`debugging`) → Plan 2 e2e is "archive (unsigned) + export plumbing only",
+> first signed `.ipa` is Plan 3's e2e. New binding findings for Plan 2: xcodebuild needs a
+> Nix-sanitized env (strip `NIX_*`/`CC`/`CXX`/`LD`/`SDKROOT`/`DEVELOPER_DIR`); nixpkgs-flutter iOS
+> app builds are broken upstream (read-only engine framework vs. ad-hoc codesign). Full evidence:
+> `docs/ios-podinstall-spike.md`.
+
+- **Decision:** lib+bin Rust crate mirroring gradle2nix; **podspec-driven resolution (B), confirmed
+  by the Phase -1 spike (see outcome above)**; **single-source `ios.nodes`**; **strict
+  Linux-compilability via cfg-gating + Phase 0 blocking gates**; **explicitly impure `buildIOSApp`**;
+  signing modeled in full (Plan 3), not stubbed.
 - **Drivers:** can't build here; CocoaPods source heterogeneity; unified-composition parity.
 - **Alternatives:** A (proven but Mac-only locking, heavier — the escape hatch if Phase -1 fails);
   C (hybrid, deferred, schema-compatible).

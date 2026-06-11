@@ -46,9 +46,10 @@ fn test_nix_codegen_simple_2_deps_inline() {
     let config = inline_config();
     let output = generate_nix_set(&graph, &config).unwrap();
 
-    let fixture =
-        std::fs::read_to_string("../../crates/gradle2nix/tests/fixtures/nix-outputs/simple-2-deps-inline.nix")
-            .unwrap();
+    let fixture = std::fs::read_to_string(
+        "../../crates/gradle2nix/tests/fixtures/nix-outputs/simple-2-deps-inline.nix",
+    )
+    .unwrap();
     assert_eq!(output, fixture, "inline output must match fixture exactly");
 }
 
@@ -62,9 +63,10 @@ fn test_nix_codegen_flake_format() {
     };
     let output = generate_nix_overlay(&graph, &config).unwrap();
 
-    let fixture =
-        std::fs::read_to_string("../../crates/gradle2nix/tests/fixtures/nix-outputs/simple-2-deps-flake.nix")
-            .unwrap();
+    let fixture = std::fs::read_to_string(
+        "../../crates/gradle2nix/tests/fixtures/nix-outputs/simple-2-deps-flake.nix",
+    )
+    .unwrap();
     assert_eq!(output, fixture, "flake output must match fixture exactly");
 }
 
@@ -101,14 +103,25 @@ fn test_nix_codegen_deterministic_output() {
 
 #[test]
 fn test_nix_codegen_large_graph_20_deps() {
-    let fixture_json =
-        std::fs::read_to_string("../../crates/gradle2nix/tests/fixtures/lockfiles/complex-20-deps.lock")
-            .unwrap();
+    let fixture_json = std::fs::read_to_string(
+        "../../crates/gradle2nix/tests/fixtures/lockfiles/complex-20-deps.lock",
+    )
+    .unwrap();
     let graph: DependencyGraph = serde_json::from_str(&fixture_json).unwrap();
     let output = generate_nix_set(&graph, &inline_config()).unwrap();
-    assert!(output.starts_with("{\n"), "output must start with opening brace");
-    assert!(output.ends_with("}\n"), "output must end with closing brace and newline");
-    assert_eq!(output.matches("fetchMaven").count(), 20, "must have 20 fetchMaven entries");
+    assert!(
+        output.starts_with("{\n"),
+        "output must start with opening brace"
+    );
+    assert!(
+        output.ends_with("}\n"),
+        "output must end with closing brace and newline"
+    );
+    assert_eq!(
+        output.matches("fetchMaven").count(),
+        20,
+        "must have 20 fetchMaven entries"
+    );
 }
 
 #[test]

@@ -36,14 +36,35 @@ pub async fn generate_lockfile(
         )
         .await
         .with_context(|| {
-            format!("resolving Android dependencies in '{}'", android_dir.display())
+            format!(
+                "resolving Android dependencies in '{}'",
+                android_dir.display()
+            )
         })?;
         Some(crate::lockfile::AndroidSection { nodes: graph.nodes })
     } else {
         None
     };
 
-    Ok(crate::lockfile::FlutterLockfile { android: android_section })
+    let ios_dir = project_dir.join("ios");
+    let ios_section = if crate::detect::detect_ios(project_dir) {
+        let graph = ios2nix::cli::lock::build_dependency_graph(
+            &ios_dir,
+            &[],
+            gradle_cache_dir,
+            timeout_secs,
+        )
+        .await
+        .with_context(|| format!("resolving iOS dependencies in '{}'", ios_dir.display()))?;
+        Some(crate::lockfile::IosSection { nodes: graph.nodes })
+    } else {
+        None
+    };
+
+    Ok(crate::lockfile::FlutterLockfile {
+        android: android_section,
+        ios: ios_section,
+    })
 }
 
 pub async fn run(cmd: LockCommand) -> anyhow::Result<()> {
@@ -59,8 +80,12 @@ pub async fn run(cmd: LockCommand) -> anyhow::Result<()> {
     let output_path = cmd
         .output
         .unwrap_or_else(|| cmd.project_dir.join("flutter2nix.lock"));
-    crate::lockfile::write_lockfile(&output_path, &lock)
-        .with_context(|| format!("writing flutter2nix lockfile to '{}'", output_path.display()))?;
+    crate::lockfile::write_lockfile(&output_path, &lock).with_context(|| {
+        format!(
+            "writing flutter2nix lockfile to '{}'",
+            output_path.display()
+        )
+    })?;
 
     println!("Wrote flutter2nix lockfile: {}", output_path.display());
     Ok(())

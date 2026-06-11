@@ -1,0 +1,19 @@
+{
+  "version": "1",
+  "nodes": [
+    {
+      "name": "Flutter",
+      "version": "1.0.0",
+      "url": "https://storage.googleapis.com/flutter_infra_release/releases/stable/ios/Flutter-1.0.0.zip",
+      "sha256": "deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef",
+      "dep_source": "pod-http"
+    },
+    {
+      "name": "firebase_core",
+      "version": "10.0.0",
+      "url": "https://github.com/firebase/firebase-ios-sdk/releases/download/10.0.0/firebase_core.zip",
+      "sha256": "cafebabe1234567890abcdefdeadbeefcafebabe1234567890abcdef12345678",
+      "dep_source": "pod-http"
+    }
+  ]
+}

@@ -1,7 +1,35 @@
 #[tokio::test]
-#[ignore = "TODO: ios2nix not yet implemented"]
 async fn test_cli_lock_full_pipeline() {
-    todo!("Phase 1: stub — project_dir: fixtures/xcode-projects/simple-app (with .ios2nix-xcode-output.json sidecar), output: pods.json, expect: file created matching podfile-locks/simple-2-pods.lock, exit 0")
+    use std::path::PathBuf;
+
+    // A tempdir plays the ios/ project dir; the committed sidecar fixture
+    // short-circuits resolution so the pipeline runs hermetically.
+    let ios_dir = tempfile::TempDir::new().unwrap();
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    std::fs::copy(
+        fixtures.join("sidecars/simple.ios2nix-podspecs.json"),
+        ios_dir.path().join(".ios2nix-podspecs.json"),
+    )
+    .unwrap();
+
+    let output = ios_dir.path().join("ios2nix.lock");
+    ios2nix::cli::lock::run(ios2nix::cli::lock::LockCommand {
+        ios_dir: ios_dir.path().to_path_buf(),
+        output: Some(output.clone()),
+        spec_repos: None,
+        cache_dir: None,
+        timeout_secs: 60,
+    })
+    .await
+    .unwrap();
+
+    let written = std::fs::read_to_string(&output).unwrap();
+    let expected =
+        std::fs::read_to_string(fixtures.join("lockfiles/simple-expected.lock")).unwrap();
+    assert_eq!(
+        written, expected,
+        "lock output must match simple-expected.lock fixture byte-for-byte"
+    );
 }
 
 #[tokio::test]

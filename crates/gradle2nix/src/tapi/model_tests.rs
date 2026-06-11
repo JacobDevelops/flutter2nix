@@ -11,7 +11,8 @@ fn test_parse_tapi_valid_basic() {
 
 #[test]
 fn test_parse_tapi_missing_required_field_version() {
-    let json = std::fs::read_to_string("tests/fixtures/tapi-outputs/malformed-missing-field.json").unwrap();
+    let json = std::fs::read_to_string("tests/fixtures/tapi-outputs/malformed-missing-field.json")
+        .unwrap();
     let err = parse_tapi_output(&json).unwrap_err();
     assert!(
         err.to_string().contains("missing field"),
@@ -21,14 +22,20 @@ fn test_parse_tapi_missing_required_field_version() {
 
 #[test]
 fn test_parse_tapi_unknown_extra_fields_ignored() {
-    let json = std::fs::read_to_string("tests/fixtures/tapi-outputs/malformed-unknown-fields.json").unwrap();
+    let json = std::fs::read_to_string("tests/fixtures/tapi-outputs/malformed-unknown-fields.json")
+        .unwrap();
     let result = parse_tapi_output(&json);
-    assert!(result.is_ok(), "expected Ok, got: {:?}", result.unwrap_err());
+    assert!(
+        result.is_ok(),
+        "expected Ok, got: {:?}",
+        result.unwrap_err()
+    );
 }
 
 #[test]
 fn test_parse_tapi_version_mismatch_error() {
-    let json = std::fs::read_to_string("tests/fixtures/tapi-outputs/version-mismatch.json").unwrap();
+    let json =
+        std::fs::read_to_string("tests/fixtures/tapi-outputs/version-mismatch.json").unwrap();
     let err = parse_tapi_output(&json).unwrap_err();
     assert!(
         err.to_string().contains("unsupported TAPI version"),
@@ -38,15 +45,22 @@ fn test_parse_tapi_version_mismatch_error() {
 
 #[test]
 fn test_parse_tapi_with_classifiers() {
-    let json = std::fs::read_to_string("tests/fixtures/tapi-outputs/with-classifiers.json").unwrap();
+    let json =
+        std::fs::read_to_string("tests/fixtures/tapi-outputs/with-classifiers.json").unwrap();
     let output = parse_tapi_output(&json).unwrap();
     let has_no_classifier = output.artifacts.iter().any(|a| a.classifier.is_none());
     let has_sources = output
         .artifacts
         .iter()
         .any(|a| a.classifier.as_deref() == Some("sources"));
-    assert!(has_no_classifier, "expected at least one artifact with no classifier");
-    assert!(has_sources, "expected at least one artifact with classifier 'sources'");
+    assert!(
+        has_no_classifier,
+        "expected at least one artifact with no classifier"
+    );
+    assert!(
+        has_sources,
+        "expected at least one artifact with classifier 'sources'"
+    );
 }
 
 #[test]
@@ -54,7 +68,10 @@ fn test_parse_tapi_with_test_scope() {
     let json = std::fs::read_to_string("tests/fixtures/tapi-outputs/with-test-scope.json").unwrap();
     let output = parse_tapi_output(&json).unwrap();
     let has_test_scope = output.artifacts.iter().any(|a| a.scope == "test");
-    assert!(has_test_scope, "expected at least one artifact with scope 'test'");
+    assert!(
+        has_test_scope,
+        "expected at least one artifact with scope 'test'"
+    );
 }
 
 #[test]
@@ -68,7 +85,12 @@ buildscript {
 }
 "#;
     let coords = parse_buildscript_deps(content).unwrap();
-    assert_eq!(coords.len(), 2, "expected 2 buildscript coords, got {}", coords.len());
+    assert_eq!(
+        coords.len(),
+        2,
+        "expected 2 buildscript coords, got {}",
+        coords.len()
+    );
 
     // Verify AGP is in the results
     let has_agp = coords.iter().any(|c| {
@@ -78,7 +100,9 @@ buildscript {
 
     // Verify Kotlin plugin is in the results
     let has_kotlin = coords.iter().any(|c| {
-        c.group == "org.jetbrains.kotlin" && c.artifact == "kotlin-gradle-plugin" && c.version == "1.8.0"
+        c.group == "org.jetbrains.kotlin"
+            && c.artifact == "kotlin-gradle-plugin"
+            && c.version == "1.8.0"
     });
     assert!(has_kotlin, "expected Kotlin plugin coordinate in results");
 }
@@ -91,7 +115,10 @@ buildscript {
 }
 "#;
     let result = parse_buildscript_deps(content);
-    assert!(result.is_err(), "expected Err when buildscript block exists but has no classpath deps");
+    assert!(
+        result.is_err(),
+        "expected Err when buildscript block exists but has no classpath deps"
+    );
     let msg = result.unwrap_err().to_string();
     assert!(
         msg.contains("Buildscript block detected but no classpath dependencies found"),
@@ -111,5 +138,10 @@ dependencies {
 }
 "#;
     let coords = parse_buildscript_deps(content).unwrap();
-    assert_eq!(coords.len(), 0, "expected empty vec when no buildscript block, got: {:?}", coords);
+    assert_eq!(
+        coords.len(),
+        0,
+        "expected empty vec when no buildscript block, got: {:?}",
+        coords
+    );
 }

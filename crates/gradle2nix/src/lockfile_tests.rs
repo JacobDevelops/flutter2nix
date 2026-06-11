@@ -35,7 +35,10 @@ fn test_write_lockfile_simple() {
 fn test_read_lockfile_simple() {
     let graph = load_fixture("simple-2-deps.lock");
     assert_eq!(graph.nodes.len(), 2);
-    assert!(graph.nodes.iter().any(|n| n.name == "com.google.guava:guava:31.1-jre"));
+    assert!(graph
+        .nodes
+        .iter()
+        .any(|n| n.name == "com.google.guava:guava:31.1-jre"));
     assert!(graph.nodes.iter().any(|n| n.name == "junit:junit:4.13.2"));
 }
 
@@ -72,7 +75,10 @@ fn test_read_lockfile_missing_required_field() {
 fn test_diff_lockfiles_fresh() {
     let graph = load_fixture("simple-2-deps.lock");
     let diff = diff_lockfiles(&graph, &graph);
-    assert!(diff.is_empty(), "diff of identical graphs must be empty, got: {diff}");
+    assert!(
+        diff.is_empty(),
+        "diff of identical graphs must be empty, got: {diff}"
+    );
 }
 
 #[test]
@@ -80,7 +86,12 @@ fn test_diff_lockfiles_stale_added_one_dep() {
     let old = load_fixture("simple-2-deps.lock");
     let new = load_fixture("complex-20-deps.lock");
     let diff = diff_lockfiles(&old, &new);
-    assert_eq!(diff.added.len(), 18, "expected 18 added deps, got {}: {diff}", diff.added.len());
+    assert_eq!(
+        diff.added.len(),
+        18,
+        "expected 18 added deps, got {}: {diff}",
+        diff.added.len()
+    );
     assert_eq!(diff.removed.len(), 0);
     assert_eq!(diff.modified.len(), 0);
 }
@@ -90,7 +101,11 @@ fn test_diff_lockfiles_stale_sha256_changed() {
     let old = load_fixture("simple-2-deps.lock");
     let new = load_fixture("simple-2-deps-stale.lock");
     let diff = diff_lockfiles(&old, &new);
-    assert_eq!(diff.modified.len(), 1, "expected 1 modified dep, got: {diff}");
+    assert_eq!(
+        diff.modified.len(),
+        1,
+        "expected 1 modified dep, got: {diff}"
+    );
     assert_eq!(diff.added.len(), 0);
     assert_eq!(diff.removed.len(), 0);
     let (old_dep, _new_dep) = &diff.modified[0];
@@ -103,18 +118,36 @@ fn test_diff_lockfiles_classifier_identity_distinct() {
     let sha_src = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     let base_dep = make_dep("com.google.guava:guava:31.1-jre", "31.1-jre", sha);
-    let sources_dep = make_dep("com.google.guava:guava:31.1-jre:sources", "31.1-jre", sha_src);
+    let sources_dep = make_dep(
+        "com.google.guava:guava:31.1-jre:sources",
+        "31.1-jre",
+        sha_src,
+    );
 
-    let old = DependencyGraph { format_version: "1".to_string(), nodes: vec![base_dep.clone()] };
+    let old = DependencyGraph {
+        format_version: "1".to_string(),
+        nodes: vec![base_dep.clone()],
+    };
     let new = DependencyGraph {
         format_version: "1".to_string(),
         nodes: vec![base_dep, sources_dep.clone()],
     };
 
     let diff = diff_lockfiles(&old, &new);
-    assert_eq!(diff.added.len(), 1, "expected 1 added (sources variant), got: {diff}");
-    assert_eq!(diff.added[0].name, "com.google.guava:guava:31.1-jre:sources");
-    assert_eq!(diff.modified.len(), 0, "classifier variant must not appear as modified");
+    assert_eq!(
+        diff.added.len(),
+        1,
+        "expected 1 added (sources variant), got: {diff}"
+    );
+    assert_eq!(
+        diff.added[0].name,
+        "com.google.guava:guava:31.1-jre:sources"
+    );
+    assert_eq!(
+        diff.modified.len(),
+        0,
+        "classifier variant must not appear as modified"
+    );
     assert_eq!(diff.removed.len(), 0);
 }
 
@@ -142,12 +175,30 @@ fn test_diff_output_is_readable() {
     let diff = diff_lockfiles(&old, &new);
     let display = diff.to_string();
 
-    assert!(display.contains('+'), "display must contain '+' for added deps, got:\n{display}");
-    assert!(display.contains('-'), "display must contain '-' for removed deps, got:\n{display}");
-    assert!(display.contains('~'), "display must contain '~' for modified deps, got:\n{display}");
-    assert!(display.contains("added-dep"), "display must name the added dep, got:\n{display}");
-    assert!(display.contains("removed-dep"), "display must name the removed dep, got:\n{display}");
-    assert!(display.contains("modified-dep"), "display must name the modified dep, got:\n{display}");
+    assert!(
+        display.contains('+'),
+        "display must contain '+' for added deps, got:\n{display}"
+    );
+    assert!(
+        display.contains('-'),
+        "display must contain '-' for removed deps, got:\n{display}"
+    );
+    assert!(
+        display.contains('~'),
+        "display must contain '~' for modified deps, got:\n{display}"
+    );
+    assert!(
+        display.contains("added-dep"),
+        "display must name the added dep, got:\n{display}"
+    );
+    assert!(
+        display.contains("removed-dep"),
+        "display must name the removed dep, got:\n{display}"
+    );
+    assert!(
+        display.contains("modified-dep"),
+        "display must name the modified dep, got:\n{display}"
+    );
 }
 
 #[test]
@@ -177,6 +228,9 @@ fn test_locked_dependency_source_field_serialization() {
 
     // Roundtrip: serialize and deserialize
     let roundtripped: LockedDependency = serde_json::from_str(&json_with_source).unwrap();
-    assert_eq!(roundtripped.dep_source, Some("buildscript-fallback".to_string()),
-        "dep_source should roundtrip correctly");
+    assert_eq!(
+        roundtripped.dep_source,
+        Some("buildscript-fallback".to_string()),
+        "dep_source should roundtrip correctly"
+    );
 }

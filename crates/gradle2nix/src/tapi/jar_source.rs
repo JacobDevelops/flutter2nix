@@ -38,7 +38,10 @@ pub fn extract_jar_to_temp(source: TapiShimSource) -> anyhow::Result<ShimJar> {
                 .tempfile()?;
             temp.write_all(bytes)?;
             let temp_path = temp.into_temp_path();
-            Ok(ShimJar { path: temp_path.to_path_buf(), _temp: Some(temp_path) })
+            Ok(ShimJar {
+                path: temp_path.to_path_buf(),
+                _temp: Some(temp_path),
+            })
         }
         TapiShimSource::EnvPath(path) => Ok(ShimJar { path, _temp: None }),
     }

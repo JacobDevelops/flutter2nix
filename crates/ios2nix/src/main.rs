@@ -1,39 +1,39 @@
-#![allow(dead_code)]
+use clap::Parser;
+use ios2nix::cli::{self, Args, Command};
 
-use clap::{Parser, Subcommand};
-
-mod cli;
-mod cocoapods;
-mod export_opts;
-mod keychain;
-mod xcode;
-
-#[derive(Parser)]
-#[command(name = "ios2nix", about = "iOS/Xcode orchestration for reproducible Nix builds")]
-struct Args {
-    #[command(subcommand)]
-    command: Option<Command>,
-}
-
-#[derive(Subcommand)]
-enum Command {
-    /// Generate pods.nix from Podfile.lock
-    Lock,
-    /// Build the iOS project
-    Build,
-    /// Create an .xcarchive
-    Archive,
-    /// Export a signed .ipa from an .xcarchive
-    Export,
-    /// Sign an existing .ipa
-    Sign,
-}
-
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     match args.command {
-        Some(Command::Lock) => cli::lock::run(),
+        Some(Command::Lock(lock_args)) => {
+            let cmd = cli::lock::LockCommand {
+                ios_dir: lock_args.ios_dir,
+                output: lock_args.output,
+                spec_repos: lock_args.spec_repo,
+                cache_dir: lock_args.cache_dir,
+                timeout_secs: lock_args.timeout_secs,
+            };
+            cli::lock::run(cmd).await
+        }
+        Some(Command::Check(check_args)) => {
+            let cmd = cli::check::CheckCommand {
+                ios_dir: check_args.ios_dir,
+                lockfile: check_args.lockfile,
+                spec_repos: check_args.spec_repo,
+                cache_dir: check_args.cache_dir,
+                timeout_secs: check_args.timeout_secs,
+            };
+            cli::check::run(cmd).await
+        }
+        Some(Command::Generate(gen_args)) => {
+            let cmd = cli::generate::GenerateCommand {
+                lockfile: gen_args.lockfile,
+                output: gen_args.output,
+                format: gen_args.format,
+            };
+            cli::generate::run(cmd)
+        }
         Some(Command::Build) => cli::build::run(),
         Some(Command::Archive) => cli::archive::run(),
         Some(Command::Export) => cli::export::run(),

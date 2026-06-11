@@ -9,7 +9,9 @@ async fn test_cli_lock_full_pipeline() {
         gradle_dir: PathBuf::from("tests/fixtures/gradle-projects/simple-app"),
         output: Some(tmp.path().to_path_buf()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
-        gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_cache_dir: Some(PathBuf::from(
+            "tests/fixtures/maven-repos/maven-central-stub",
+        )),
         gradle_user_home: None,
         timeout_secs: 60,
     })
@@ -22,7 +24,10 @@ async fn test_cli_lock_full_pipeline() {
         &std::fs::read_to_string("tests/fixtures/lockfiles/simple-2-deps.lock").unwrap(),
     )
     .unwrap();
-    assert_eq!(written, fixture, "lock output must match simple-2-deps.lock");
+    assert_eq!(
+        written, fixture,
+        "lock output must match simple-2-deps.lock"
+    );
 }
 
 #[tokio::test]
@@ -31,30 +36,46 @@ async fn test_cli_check_fresh_lockfile() {
         gradle_dir: PathBuf::from("tests/fixtures/gradle-projects/simple-app"),
         lockfile: Some(PathBuf::from("tests/fixtures/lockfiles/simple-2-deps.lock")),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
-        gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_cache_dir: Some(PathBuf::from(
+            "tests/fixtures/maven-repos/maven-central-stub",
+        )),
         gradle_user_home: None,
         timeout_secs: 60,
     })
     .await;
 
-    assert!(result.is_ok(), "check on fresh lockfile must exit 0, got: {:?}", result.unwrap_err());
+    assert!(
+        result.is_ok(),
+        "check on fresh lockfile must exit 0, got: {:?}",
+        result.unwrap_err()
+    );
 }
 
 #[tokio::test]
 async fn test_cli_check_stale_lockfile() {
     let result = cli::check::run(cli::check::CheckCommand {
         gradle_dir: PathBuf::from("tests/fixtures/gradle-projects/simple-app"),
-        lockfile: Some(PathBuf::from("tests/fixtures/lockfiles/simple-2-deps-stale.lock")),
+        lockfile: Some(PathBuf::from(
+            "tests/fixtures/lockfiles/simple-2-deps-stale.lock",
+        )),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
-        gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_cache_dir: Some(PathBuf::from(
+            "tests/fixtures/maven-repos/maven-central-stub",
+        )),
         gradle_user_home: None,
         timeout_secs: 60,
     })
     .await;
 
-    assert!(result.is_err(), "check on stale lockfile must exit non-zero");
+    assert!(
+        result.is_err(),
+        "check on stale lockfile must exit non-zero"
+    );
     let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("stale"), "error message must mention 'stale': {msg}");
+    assert!(
+        msg.contains("stale"),
+        "error message must mention 'stale': {msg}"
+    );
 }
 
 #[tokio::test]
@@ -71,7 +92,10 @@ async fn test_cli_generate_from_lockfile() {
     let written = std::fs::read_to_string(tmp.path()).unwrap();
     let fixture =
         std::fs::read_to_string("tests/fixtures/nix-outputs/simple-2-deps-inline.nix").unwrap();
-    assert_eq!(written, fixture, "generate output must match simple-2-deps-inline.nix");
+    assert_eq!(
+        written, fixture,
+        "generate output must match simple-2-deps-inline.nix"
+    );
 }
 
 #[tokio::test]
@@ -99,7 +123,9 @@ async fn test_lock_output_flag_writes_to_specified_path() {
         gradle_dir: PathBuf::from("tests/fixtures/gradle-projects/simple-app"),
         output: Some(output_path.clone()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
-        gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_cache_dir: Some(PathBuf::from(
+            "tests/fixtures/maven-repos/maven-central-stub",
+        )),
         gradle_user_home: None,
         timeout_secs: 60,
     })
@@ -141,7 +167,9 @@ async fn test_e2e_lock_check_generate_full_pipeline() {
         gradle_dir: PathBuf::from("tests/fixtures/gradle-projects/with-buildscript"),
         output: Some(lockfile_path.clone()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
-        gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_cache_dir: Some(PathBuf::from(
+            "tests/fixtures/maven-repos/maven-central-stub",
+        )),
         gradle_user_home: None,
         timeout_secs: 60,
     })
@@ -156,7 +184,9 @@ async fn test_e2e_lock_check_generate_full_pipeline() {
         gradle_dir: PathBuf::from("tests/fixtures/gradle-projects/with-buildscript"),
         lockfile: Some(lockfile_path.clone()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
-        gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_cache_dir: Some(PathBuf::from(
+            "tests/fixtures/maven-repos/maven-central-stub",
+        )),
         gradle_user_home: None,
         timeout_secs: 60,
     })
@@ -216,7 +246,9 @@ async fn test_e2e_nix_eval_generated_output() {
         gradle_dir: PathBuf::from("tests/fixtures/gradle-projects/with-buildscript"),
         output: Some(lockfile_path.clone()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
-        gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_cache_dir: Some(PathBuf::from(
+            "tests/fixtures/maven-repos/maven-central-stub",
+        )),
         gradle_user_home: None,
         timeout_secs: 60,
     })
@@ -234,9 +266,18 @@ async fn test_e2e_nix_eval_generated_output() {
     let nix_content = std::fs::read_to_string(&nix_output_path).unwrap();
 
     // Verify it contains fetchMaven calls and SRI hashes
-    assert!(nix_content.contains("fetchMaven"), "Nix output must contain fetchMaven");
-    assert!(nix_content.contains("sha256-"), "Nix output must use SRI format");
-    assert!(nix_content.contains("repo ="), "Nix output must contain repo attribute");
+    assert!(
+        nix_content.contains("fetchMaven"),
+        "Nix output must contain fetchMaven"
+    );
+    assert!(
+        nix_content.contains("sha256-"),
+        "Nix output must use SRI format"
+    );
+    assert!(
+        nix_content.contains("repo ="),
+        "Nix output must contain repo attribute"
+    );
     assert!(
         nix_content.contains("artifact ="),
         "Nix output must contain artifact attribute"
@@ -280,17 +321,34 @@ async fn test_e2e_real_gradle_no_mocks() {
     let lockfile: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(tmp.path()).unwrap()).unwrap();
 
-    let nodes = lockfile["nodes"].as_array().expect("lockfile must have a nodes array");
-    assert!(!nodes.is_empty(), "lockfile must contain at least one dependency");
+    let nodes = lockfile["nodes"]
+        .as_array()
+        .expect("lockfile must have a nodes array");
+    assert!(
+        !nodes.is_empty(),
+        "lockfile must contain at least one dependency"
+    );
 
     let has_junit = nodes.iter().any(|n| {
-        n["name"].as_str().map(|s| s.starts_with("junit:junit:")).unwrap_or(false)
+        n["name"]
+            .as_str()
+            .map(|s| s.starts_with("junit:junit:"))
+            .unwrap_or(false)
     });
-    assert!(has_junit, "lockfile must contain junit:junit — nodes: {nodes:?}");
+    assert!(
+        has_junit,
+        "lockfile must contain junit:junit — nodes: {nodes:?}"
+    );
 
     for node in nodes {
-        let sha256 = node["sha256"].as_str().expect("each node must have a sha256 field");
-        assert_eq!(sha256.len(), 64, "sha256 must be a 64-char hex string, got: {sha256}");
+        let sha256 = node["sha256"]
+            .as_str()
+            .expect("each node must have a sha256 field");
+        assert_eq!(
+            sha256.len(),
+            64,
+            "sha256 must be a 64-char hex string, got: {sha256}"
+        );
         assert!(
             sha256.chars().all(|c| c.is_ascii_hexdigit()),
             "sha256 must be hex, got: {sha256}"
@@ -314,7 +372,9 @@ async fn test_cli_lock_android_fixture() {
             "https://dl.google.com/dl/android/maven2/".to_string(),
             "https://storage.googleapis.com/download.flutter.io".to_string(),
         ]),
-        gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/android-maven-stub")),
+        gradle_cache_dir: Some(PathBuf::from(
+            "tests/fixtures/maven-repos/android-maven-stub",
+        )),
         gradle_user_home: None,
         timeout_secs: 60,
     })
@@ -329,26 +389,49 @@ async fn test_cli_lock_android_fixture() {
     let lockfile: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(tmp.path()).unwrap()).unwrap();
 
-    let nodes = lockfile["nodes"].as_array().expect("lockfile must have a nodes array");
-    assert!(!nodes.is_empty(), "init-script path must produce at least one dependency node");
+    let nodes = lockfile["nodes"]
+        .as_array()
+        .expect("lockfile must have a nodes array");
+    assert!(
+        !nodes.is_empty(),
+        "init-script path must produce at least one dependency node"
+    );
 
     // androidx.core:core-ktx is an AAR — proves the init-script resolver ran (IdeaProject can't see it).
     let core_ktx = nodes.iter().find(|n| {
-        n["name"].as_str().map(|s| s.starts_with("androidx.core:core-ktx:")).unwrap_or(false)
+        n["name"]
+            .as_str()
+            .map(|s| s.starts_with("androidx.core:core-ktx:"))
+            .unwrap_or(false)
     });
-    assert!(core_ktx.is_some(), "lockfile must contain androidx.core:core-ktx — nodes: {nodes:?}");
     assert!(
-        core_ktx.unwrap()["url"].as_str().unwrap_or("").contains("dl.google.com"),
+        core_ktx.is_some(),
+        "lockfile must contain androidx.core:core-ktx — nodes: {nodes:?}"
+    );
+    assert!(
+        core_ktx.unwrap()["url"]
+            .as_str()
+            .unwrap_or("")
+            .contains("dl.google.com"),
         "androidx artifact must be routed to Google Maven"
     );
 
     // io.flutter artifact must be routed to Flutter Storage, not Google Maven.
     let flutter_emb = nodes.iter().find(|n| {
-        n["name"].as_str().map(|s| s.starts_with("io.flutter:flutter_embedding_debug:")).unwrap_or(false)
+        n["name"]
+            .as_str()
+            .map(|s| s.starts_with("io.flutter:flutter_embedding_debug:"))
+            .unwrap_or(false)
     });
-    assert!(flutter_emb.is_some(), "lockfile must contain io.flutter:flutter_embedding_debug — nodes: {nodes:?}");
     assert!(
-        flutter_emb.unwrap()["url"].as_str().unwrap_or("").contains("storage.googleapis.com"),
+        flutter_emb.is_some(),
+        "lockfile must contain io.flutter:flutter_embedding_debug — nodes: {nodes:?}"
+    );
+    assert!(
+        flutter_emb.unwrap()["url"]
+            .as_str()
+            .unwrap_or("")
+            .contains("storage.googleapis.com"),
         "io.flutter artifact must be routed to Flutter Storage"
     );
 }
@@ -390,17 +473,34 @@ async fn test_e2e_gradle9_no_mocks() {
     let lockfile: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(tmp.path()).unwrap()).unwrap();
 
-    let nodes = lockfile["nodes"].as_array().expect("lockfile must have a nodes array");
-    assert!(!nodes.is_empty(), "lockfile must contain at least one dependency");
+    let nodes = lockfile["nodes"]
+        .as_array()
+        .expect("lockfile must have a nodes array");
+    assert!(
+        !nodes.is_empty(),
+        "lockfile must contain at least one dependency"
+    );
 
     let has_junit = nodes.iter().any(|n| {
-        n["name"].as_str().map(|s| s.starts_with("junit:junit:")).unwrap_or(false)
+        n["name"]
+            .as_str()
+            .map(|s| s.starts_with("junit:junit:"))
+            .unwrap_or(false)
     });
-    assert!(has_junit, "lockfile must contain junit:junit — nodes: {nodes:?}");
+    assert!(
+        has_junit,
+        "lockfile must contain junit:junit — nodes: {nodes:?}"
+    );
 
     for node in nodes {
-        let sha256 = node["sha256"].as_str().expect("each node must have a sha256 field");
-        assert_eq!(sha256.len(), 64, "sha256 must be a 64-char hex string, got: {sha256}");
+        let sha256 = node["sha256"]
+            .as_str()
+            .expect("each node must have a sha256 field");
+        assert_eq!(
+            sha256.len(),
+            64,
+            "sha256 must be a 64-char hex string, got: {sha256}"
+        );
         assert!(
             sha256.chars().all(|c| c.is_ascii_hexdigit()),
             "sha256 must be hex, got: {sha256}"
@@ -425,7 +525,9 @@ async fn test_cli_lock_refuses_empty_artifact_set() {
         gradle_dir: project.path().to_path_buf(),
         output: Some(output.clone()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
-        gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        gradle_cache_dir: Some(PathBuf::from(
+            "tests/fixtures/maven-repos/maven-central-stub",
+        )),
         gradle_user_home: None,
         timeout_secs: 60,
     })
@@ -456,15 +558,24 @@ async fn test_cli_lock_discovery_phases() {
         timeout_secs: 10,
     })
     .await;
-    assert!(result.is_ok(), "discovery lock must succeed offline: {:?}", result.unwrap_err());
+    assert!(
+        result.is_ok(),
+        "discovery lock must succeed offline: {:?}",
+        result.unwrap_err()
+    );
 
     let lockfile: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(tmp.path()).unwrap()).unwrap();
-    let nodes = lockfile["nodes"].as_array().expect("lockfile must have a nodes array");
+    let nodes = lockfile["nodes"]
+        .as_array()
+        .expect("lockfile must have a nodes array");
     let has_node = |name: &str, url_suffix: &str| {
         nodes.iter().any(|n| {
             n["name"].as_str() == Some(name)
-                && n["url"].as_str().map(|u| u.ends_with(url_suffix)).unwrap_or(false)
+                && n["url"]
+                    .as_str()
+                    .map(|u| u.ends_with(url_suffix))
+                    .unwrap_or(false)
         })
     };
 
@@ -475,7 +586,10 @@ async fn test_cli_lock_discovery_phases() {
         "cached-version scan must add the guava 33.3.1 POM — nodes: {nodes:?}"
     );
     assert!(
-        has_node("com.google.guava:guava:33.3.1-jre", "guava-33.3.1-jre.module"),
+        has_node(
+            "com.google.guava:guava:33.3.1-jre",
+            "guava-33.3.1-jre.module"
+        ),
         "cached-version scan must add the guava 33.3.1 module metadata — nodes: {nodes:?}"
     );
 
@@ -491,12 +605,18 @@ async fn test_cli_lock_discovery_phases() {
 
     // AGP aapt2: aapt2-proto in the resolved set signals which co-versioned
     // linux aapt2 binary the offline build will fetch at task execution time.
-    let aapt2 = nodes.iter().find(|n| {
-        n["name"].as_str() == Some("com.android.tools.build:aapt2:8.6.0-11315950:linux")
-    });
-    assert!(aapt2.is_some(), "aapt2 discovery must add the linux binary — nodes: {nodes:?}");
+    let aapt2 = nodes
+        .iter()
+        .find(|n| n["name"].as_str() == Some("com.android.tools.build:aapt2:8.6.0-11315950:linux"));
     assert!(
-        aapt2.unwrap()["url"].as_str().unwrap_or("").contains("dl.google.com"),
+        aapt2.is_some(),
+        "aapt2 discovery must add the linux binary — nodes: {nodes:?}"
+    );
+    assert!(
+        aapt2.unwrap()["url"]
+            .as_str()
+            .unwrap_or("")
+            .contains("dl.google.com"),
         "aapt2 must be routed to Google Maven"
     );
 }

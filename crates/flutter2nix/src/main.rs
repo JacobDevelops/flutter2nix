@@ -3,7 +3,10 @@ use flutter2nix::cli;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "flutter2nix", about = "Flutter integration layer for reproducible Nix builds")]
+#[command(
+    name = "flutter2nix",
+    about = "Flutter integration layer for reproducible Nix builds"
+)]
 struct Args {
     #[command(subcommand)]
     command: Option<Command>,

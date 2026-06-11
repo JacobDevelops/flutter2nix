@@ -18,7 +18,9 @@ pub struct GenerateCommand {
 
 /// Flow: read lockfile → delegate to nix_core codegen → write Nix output
 pub fn run(cmd: GenerateCommand) -> anyhow::Result<()> {
-    let lockfile_path = cmd.lockfile.unwrap_or_else(|| PathBuf::from("gradle2nix.lock"));
+    let lockfile_path = cmd
+        .lockfile
+        .unwrap_or_else(|| PathBuf::from("gradle2nix.lock"));
     let graph = crate::lockfile::read_lockfile(&lockfile_path)?;
 
     let (fetcher, nix_content) = match cmd.format {

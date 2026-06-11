@@ -49,7 +49,8 @@ async fn http_get(
             Ok(Ok(resp)) => return Ok(resp),
             Ok(Err(e)) => {
                 log::debug!("HTTP attempt {} failed for {}: {}", attempt + 1, url, e);
-                last = Some(anyhow::Error::new(e).context(format!("HTTP request failed for {}", url)));
+                last =
+                    Some(anyhow::Error::new(e).context(format!("HTTP request failed for {}", url)));
             }
             Err(_) => {
                 log::debug!("HTTP attempt {} timed out for {}", attempt + 1, url);
@@ -94,7 +95,11 @@ pub fn artifact_repo_url(coord: &MavenCoordinate) -> String {
         || is_group("com.google.gms")
         || is_group("com.google.ar");
 
-    if is_google { GOOGLE_MAVEN.to_string() } else { MAVEN_CENTRAL.to_string() }
+    if is_google {
+        GOOGLE_MAVEN.to_string()
+    } else {
+        MAVEN_CENTRAL.to_string()
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -127,7 +132,10 @@ impl MavenCoordinate {
             group: parts[0].to_string(),
             artifact: parts[1].to_string(),
             version: parts[2].to_string(),
-            classifier: parts.get(3).filter(|c| !c.is_empty()).map(|c| c.to_string()),
+            classifier: parts
+                .get(3)
+                .filter(|c| !c.is_empty())
+                .map(|c| c.to_string()),
             extension,
         })
     }
@@ -137,10 +145,16 @@ impl MavenCoordinate {
     pub fn to_artifact_path(&self) -> String {
         let group_path = self.group.replace('.', "/");
         let filename = match &self.classifier {
-            Some(c) => format!("{}-{}-{}.{}", self.artifact, self.version, c, self.extension),
+            Some(c) => format!(
+                "{}-{}-{}.{}",
+                self.artifact, self.version, c, self.extension
+            ),
             None => format!("{}-{}.{}", self.artifact, self.version, self.extension),
         };
-        format!("{}/{}/{}/{}", group_path, self.artifact, self.version, filename)
+        format!(
+            "{}/{}/{}/{}",
+            group_path, self.artifact, self.version, filename
+        )
     }
 }
 
@@ -228,7 +242,10 @@ fn find_sha256_in_gradle_cache(
     }
 
     let filename = match &coord.classifier {
-        Some(c) => format!("{}-{}-{}.{}", coord.artifact, coord.version, c, coord.extension),
+        Some(c) => format!(
+            "{}-{}-{}.{}",
+            coord.artifact, coord.version, c, coord.extension
+        ),
         None => format!("{}-{}.{}", coord.artifact, coord.version, coord.extension),
     };
 
@@ -332,7 +349,10 @@ async fn fetch_sha256_http(
             "HTTP {} from {}: {}",
             art_response.status().as_u16(),
             artifact_url,
-            art_response.status().canonical_reason().unwrap_or("Unknown")
+            art_response
+                .status()
+                .canonical_reason()
+                .unwrap_or("Unknown")
         );
     }
 
@@ -340,7 +360,10 @@ async fn fetch_sha256_http(
         "HTTP {} from {}: {}",
         sha256_response.status().as_u16(),
         sha256_url,
-        sha256_response.status().canonical_reason().unwrap_or("Unknown")
+        sha256_response
+            .status()
+            .canonical_reason()
+            .unwrap_or("Unknown")
     );
 }
 
@@ -355,7 +378,10 @@ pub async fn fetch_pom_content(
     let client = shared_http_client();
     let cache = config.resolve_cache.as_deref();
     let artifact_path = coord.to_artifact_path();
-    let base_urls: Vec<String> = repo_urls.iter().map(|u| u.trim_end_matches('/').to_string()).collect();
+    let base_urls: Vec<String> = repo_urls
+        .iter()
+        .map(|u| u.trim_end_matches('/').to_string())
+        .collect();
     for base in &base_urls {
         let url = format!("{}/{}", base, artifact_path);
         if let Some(entry) = cache.and_then(|c| c.lookup_pom(&url)) {
@@ -437,7 +463,8 @@ pub fn extract_pom_bom_imports(pom: &str) -> Vec<(String, String, String)> {
 pub fn extract_pom_direct_deps(pom: &str) -> Vec<(String, String, String)> {
     // Strip <dependencyManagement> so its nested <dependencies> doesn't confuse the search.
     let dm_start = pom.find("<dependencyManagement>").unwrap_or(pom.len());
-    let dm_end = pom.find("</dependencyManagement>")
+    let dm_end = pom
+        .find("</dependencyManagement>")
         .map(|i| i + "</dependencyManagement>".len())
         .unwrap_or(pom.len());
     let pom_no_dm = format!("{}{}", &pom[..dm_start], &pom[dm_end.min(pom.len())..]);
@@ -467,7 +494,10 @@ pub fn extract_pom_direct_deps(pom: &str) -> Vec<(String, String, String)> {
         pos = dep_end;
 
         let scope = extract_xml_text(dep_block, "scope");
-        if matches!(scope.as_deref(), Some("test") | Some("provided") | Some("system")) {
+        if matches!(
+            scope.as_deref(),
+            Some("test") | Some("provided") | Some("system")
+        ) {
             continue;
         }
 
@@ -531,7 +561,10 @@ fn resolve_pom_property<'a>(pom: &str, value: &'a str) -> std::borrow::Cow<'a, s
 
     // User-defined <properties> block.
     if let Some(start) = pom.find("<properties>") {
-        let end = pom[start..].find("</properties>").map(|i| start + i).unwrap_or(pom.len());
+        let end = pom[start..]
+            .find("</properties>")
+            .map(|i| start + i)
+            .unwrap_or(pom.len());
         let props_block = &pom[start..end];
         if let Some(v) = extract_xml_text(props_block, inner) {
             return std::borrow::Cow::Owned(v);
@@ -559,9 +592,8 @@ pub async fn resolve_artifact_sha256(
     if let Some(cache_dir) = &config.local_cache_dir {
         let sha256_path = cache_dir.join(&sha256_rel);
         if sha256_path.exists() {
-            let content = std::fs::read_to_string(&sha256_path).with_context(|| {
-                format!("reading sha256 file '{}'", sha256_path.display())
-            })?;
+            let content = std::fs::read_to_string(&sha256_path)
+                .with_context(|| format!("reading sha256 file '{}'", sha256_path.display()))?;
             let hex = content.trim().to_string();
             validate_sha256_hex(&hex, &artifact_path)?;
             return Ok(hex);
@@ -587,7 +619,9 @@ pub async fn resolve_artifact_sha256(
     if is_metadata {
         let mut last_error: Option<anyhow::Error> = None;
         for repo_url in &repo_order {
-            match fetch_sha256_http(coord, repo_url, &client, config.timeout_secs, resolve_cache).await {
+            match fetch_sha256_http(coord, repo_url, &client, config.timeout_secs, resolve_cache)
+                .await
+            {
                 Ok(hex) => return Ok(hex),
                 Err(e) => {
                     log::debug!("HTTP fetch failed from {}: {}", repo_url, e);
@@ -601,13 +635,14 @@ pub async fn resolve_artifact_sha256(
                 return Ok(hex);
             }
         }
-        return Err(last_error.unwrap_or_else(|| {
-            anyhow::anyhow!(
-                "artifact not found: '{}' — no repository URLs configured",
-                artifact_path
-            )
-        })
-        .context(format!("artifact not found: '{}'", artifact_path)));
+        return Err(last_error
+            .unwrap_or_else(|| {
+                anyhow::anyhow!(
+                    "artifact not found: '{}' — no repository URLs configured",
+                    artifact_path
+                )
+            })
+            .context(format!("artifact not found: '{}'", artifact_path)));
     }
 
     // JARs/AARs: Gradle cache first (fast, avoids HTTP), then HTTP fallback.
@@ -619,7 +654,8 @@ pub async fn resolve_artifact_sha256(
 
     let mut last_error: Option<anyhow::Error> = None;
     for repo_url in &repo_order {
-        match fetch_sha256_http(coord, repo_url, &client, config.timeout_secs, resolve_cache).await {
+        match fetch_sha256_http(coord, repo_url, &client, config.timeout_secs, resolve_cache).await
+        {
             Ok(hex) => return Ok(hex),
             Err(e) => {
                 log::debug!("HTTP fetch failed from {}: {}", repo_url, e);

@@ -59,7 +59,10 @@ fn test_maven_coordinate_special_chars_in_group() {
     assert_eq!(coord.artifact, "netty-codec-http");
     assert_eq!(coord.version, "4.1.100.Final");
     let path = coord.to_artifact_path();
-    assert!(path.starts_with("io/netty/"), "group dots must become slashes, got: {path}");
+    assert!(
+        path.starts_with("io/netty/"),
+        "group dots must become slashes, got: {path}"
+    );
 }
 
 #[test]
@@ -78,14 +81,19 @@ async fn test_resolve_artifact_sha256_from_local_cache() {
     let coord = MavenCoordinate::parse("com.google.guava:guava:31.1-jre").unwrap();
     let config = MavenResolverConfig {
         repository_urls: vec![],
-        local_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        local_cache_dir: Some(PathBuf::from(
+            "tests/fixtures/maven-repos/maven-central-stub",
+        )),
         gradle_user_home: None,
         timeout_secs: 30,
         max_concurrency: 10,
         resolve_cache: None,
     };
     let sha256 = resolve_artifact_sha256(&coord, &config).await.unwrap();
-    assert_eq!(sha256, "c4b87ce48bf565fce5dfc5db0ce5f13f69e58e6b0f7b960e42ab2e42e7cef83c");
+    assert_eq!(
+        sha256,
+        "c4b87ce48bf565fce5dfc5db0ce5f13f69e58e6b0f7b960e42ab2e42e7cef83c"
+    );
     assert_eq!(sha256.len(), 64);
     assert!(sha256.chars().all(|c| c.is_ascii_hexdigit()));
 }
@@ -135,7 +143,9 @@ async fn test_resolve_artifacts_batch() {
     ];
     let config = MavenResolverConfig {
         repository_urls: vec![],
-        local_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/maven-central-stub")),
+        local_cache_dir: Some(PathBuf::from(
+            "tests/fixtures/maven-repos/maven-central-stub",
+        )),
         gradle_user_home: None,
         timeout_secs: 30,
         max_concurrency: 10,
@@ -144,9 +154,15 @@ async fn test_resolve_artifacts_batch() {
     let results = resolve_artifacts_batch(&coords, &config).await.unwrap();
     assert_eq!(results.len(), 2);
     assert_eq!(results[0].0, coords[0]);
-    assert_eq!(results[0].1, "c4b87ce48bf565fce5dfc5db0ce5f13f69e58e6b0f7b960e42ab2e42e7cef83c");
+    assert_eq!(
+        results[0].1,
+        "c4b87ce48bf565fce5dfc5db0ce5f13f69e58e6b0f7b960e42ab2e42e7cef83c"
+    );
     assert_eq!(results[1].0, coords[1]);
-    assert_eq!(results[1].1, "8e495b634469d64fb8acfa3495a065cdc1e19432e3508bfc5cc1e73eaebc19b0");
+    assert_eq!(
+        results[1].1,
+        "8e495b634469d64fb8acfa3495a065cdc1e19432e3508bfc5cc1e73eaebc19b0"
+    );
 }
 
 #[test]
@@ -161,8 +177,14 @@ fn test_error_messages_are_actionable() {
     // Coordinate path embeds all identifying info (group/artifact/version visible in errors)
     let coord = MavenCoordinate::parse("com.example:my-lib:1.0").unwrap();
     let path = coord.to_artifact_path();
-    assert!(path.contains("com/example"), "artifact path must contain group");
-    assert!(path.contains("my-lib"), "artifact path must contain artifact id");
+    assert!(
+        path.contains("com/example"),
+        "artifact path must contain group"
+    );
+    assert!(
+        path.contains("my-lib"),
+        "artifact path must contain artifact id"
+    );
     assert!(path.contains("1.0"), "artifact path must contain version");
 }
 
@@ -174,7 +196,10 @@ fn test_maven_resolver_config_default() {
         "default max_concurrency should be 64 — requests are tiny CDN lookups and \
          wall-clock scales nearly linearly with concurrency in this range"
     );
-    assert_eq!(config.timeout_secs, 60, "default timeout should be 60 seconds");
+    assert_eq!(
+        config.timeout_secs, 60,
+        "default timeout should be 60 seconds"
+    );
     assert!(
         !config.repository_urls.is_empty(),
         "default repositories should be configured"
@@ -191,8 +216,14 @@ fn test_maven_resolver_config_custom_concurrency() {
         max_concurrency: 20,
         resolve_cache: None,
     };
-    assert_eq!(config.max_concurrency, 20, "custom max_concurrency should be respected");
-    assert_eq!(config.timeout_secs, 30, "custom timeout should be respected");
+    assert_eq!(
+        config.max_concurrency, 20,
+        "custom max_concurrency should be respected"
+    );
+    assert_eq!(
+        config.timeout_secs, 30,
+        "custom timeout should be respected"
+    );
 }
 
 // ─── HTTP resolver tests (M2) ────────────────────────────────────────────────
@@ -283,25 +314,16 @@ async fn test_resolve_artifact_sha256_http_falls_back_to_second_repo() {
     let artifact_path = coord.to_artifact_path();
     let base = mockito::server_url();
 
-    let _m1 = mockito::mock(
-        "GET",
-        format!("/repo-a/{}.sha256", artifact_path).as_str(),
-    )
-    .with_status(404)
-    .create();
-    let _m2 = mockito::mock(
-        "GET",
-        format!("/repo-b/{}.sha256", artifact_path).as_str(),
-    )
-    .with_status(200)
-    .with_body(sha256_hex.as_str())
-    .create();
+    let _m1 = mockito::mock("GET", format!("/repo-a/{}.sha256", artifact_path).as_str())
+        .with_status(404)
+        .create();
+    let _m2 = mockito::mock("GET", format!("/repo-b/{}.sha256", artifact_path).as_str())
+        .with_status(200)
+        .with_body(sha256_hex.as_str())
+        .create();
 
     let config = MavenResolverConfig {
-        repository_urls: vec![
-            format!("{}/repo-a", base),
-            format!("{}/repo-b", base),
-        ],
+        repository_urls: vec![format!("{}/repo-a", base), format!("{}/repo-b", base)],
         local_cache_dir: None,
         gradle_user_home: None,
         timeout_secs: 10,
@@ -310,7 +332,10 @@ async fn test_resolve_artifact_sha256_http_falls_back_to_second_repo() {
     };
 
     let result = resolve_artifact_sha256(&coord, &config).await.unwrap();
-    assert_eq!(result, sha256_hex, "should have resolved from second repo after first returned 404");
+    assert_eq!(
+        result, sha256_hex,
+        "should have resolved from second repo after first returned 404"
+    );
 }
 
 #[tokio::test]
@@ -349,9 +374,7 @@ async fn test_resolve_artifact_sha256_http_timeout() {
 #[tokio::test]
 async fn test_resolve_artifacts_batch_parallel_concurrent() {
     let coords: Vec<MavenCoordinate> = (0..5)
-        .map(|i| {
-            MavenCoordinate::parse(&format!("com.example:concurrent-lib-{}:1.0", i)).unwrap()
-        })
+        .map(|i| MavenCoordinate::parse(&format!("com.example:concurrent-lib-{}:1.0", i)).unwrap())
         .collect();
     let sha256_hex = "c".repeat(64);
     let base = mockito::server_url();
@@ -416,7 +439,10 @@ async fn test_resolve_artifacts_batch_parallel_fail_fast() {
     };
 
     let result = resolve_artifacts_batch(&[good, bad], &config).await;
-    assert!(result.is_err(), "batch must fail entirely when any artifact is missing");
+    assert!(
+        result.is_err(),
+        "batch must fail entirely when any artifact is missing"
+    );
     // Use {:#} to get the full error chain — the outer context is "batch resolve failed at '...'"
     // while the inner cause contains "not found"/"404" from resolve_artifact_sha256.
     let chain = format!("{:#}", result.unwrap_err());
@@ -466,7 +492,10 @@ async fn test_resolve_artifacts_batch_20_under_2s() {
         "20 artifacts took {}ms, expected <2000ms (parallel batch may be too slow)",
         elapsed.as_millis()
     );
-    eprintln!("Performance gate: 20 artifacts resolved in {}ms", elapsed.as_millis());
+    eprintln!(
+        "Performance gate: 20 artifacts resolved in {}ms",
+        elapsed.as_millis()
+    );
 }
 
 #[test]
@@ -510,38 +539,68 @@ fn routing_coord(group: &str, artifact: &str, version: &str, ext: &str) -> Maven
 fn firebase_exact_group_routes_to_google_maven() {
     // Regression: "com.google.firebase" (no subpackage) was routed to Maven Central
     // because starts_with("com.google.firebase.") failed on the exact group name.
-    let c = routing_coord("com.google.firebase", "firebase-annotations", "16.2.0", "jar");
-    assert_eq!(artifact_repo_url(&c), "https://dl.google.com/dl/android/maven2");
+    let c = routing_coord(
+        "com.google.firebase",
+        "firebase-annotations",
+        "16.2.0",
+        "jar",
+    );
+    assert_eq!(
+        artifact_repo_url(&c),
+        "https://dl.google.com/dl/android/maven2"
+    );
 }
 
 #[test]
 fn firebase_subpackage_routes_to_google_maven() {
-    let c = routing_coord("com.google.firebase.encoders", "firebase-encoders-json", "18.0.0", "jar");
-    assert_eq!(artifact_repo_url(&c), "https://dl.google.com/dl/android/maven2");
+    let c = routing_coord(
+        "com.google.firebase.encoders",
+        "firebase-encoders-json",
+        "18.0.0",
+        "jar",
+    );
+    assert_eq!(
+        artifact_repo_url(&c),
+        "https://dl.google.com/dl/android/maven2"
+    );
 }
 
 #[test]
 fn androidx_subpackage_routes_to_google_maven() {
     let c = routing_coord("androidx.core", "core-ktx", "1.12.0", "aar");
-    assert_eq!(artifact_repo_url(&c), "https://dl.google.com/dl/android/maven2");
+    assert_eq!(
+        artifact_repo_url(&c),
+        "https://dl.google.com/dl/android/maven2"
+    );
 }
 
 #[test]
 fn third_party_aar_routes_to_maven_central() {
     // AARs from third-party groups are on Maven Central, not Google Maven.
     let c = routing_coord("com.getkeepsafe.relinker", "relinker", "1.4.5", "aar");
-    assert_eq!(artifact_repo_url(&c), "https://repo.maven.apache.org/maven2");
+    assert_eq!(
+        artifact_repo_url(&c),
+        "https://repo.maven.apache.org/maven2"
+    );
 }
 
 #[test]
 fn kotlin_stdlib_routes_to_maven_central() {
     let c = routing_coord("org.jetbrains.kotlin", "kotlin-stdlib", "1.9.0", "jar");
-    assert_eq!(artifact_repo_url(&c), "https://repo.maven.apache.org/maven2");
+    assert_eq!(
+        artifact_repo_url(&c),
+        "https://repo.maven.apache.org/maven2"
+    );
 }
 
 #[test]
 fn flutter_io_routes_to_flutter_storage() {
-    let c = routing_coord("io.flutter", "flutter_embedding_debug", "1.0.0-abc123", "jar");
+    let c = routing_coord(
+        "io.flutter",
+        "flutter_embedding_debug",
+        "1.0.0-abc123",
+        "jar",
+    );
     assert_eq!(
         artifact_repo_url(&c),
         "https://storage.googleapis.com/download.flutter.io"
@@ -552,6 +611,11 @@ fn flutter_io_routes_to_flutter_storage() {
 fn gradle_kotlin_dsl_routes_to_plugin_portal() {
     // Gradle's own Kotlin DSL plugins are only published to the Gradle Plugin Portal;
     // routing them to Maven Central would produce 404 URLs in the lockfile.
-    let c = routing_coord("org.gradle.kotlin", "gradle-kotlin-dsl-plugins", "5.2.0", "jar");
+    let c = routing_coord(
+        "org.gradle.kotlin",
+        "gradle-kotlin-dsl-plugins",
+        "5.2.0",
+        "jar",
+    );
     assert_eq!(artifact_repo_url(&c), "https://plugins.gradle.org/m2");
 }

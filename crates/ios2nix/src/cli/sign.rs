@@ -1,6 +1,12 @@
 pub fn run() -> anyhow::Result<()> {
-    println!("ios2nix sign: not yet implemented — see Phase 3");
-    Ok(())
+    #[cfg(target_os = "macos")]
+    {
+        anyhow::bail!("ios2nix sign: not yet implemented (Plan 3)")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        anyhow::bail!("ios2nix sign requires macOS")
+    }
 }
 
 #[cfg(test)]
