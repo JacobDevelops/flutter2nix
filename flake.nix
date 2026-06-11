@@ -12,13 +12,10 @@
 
   outputs = { self, nixpkgs, flake-utils, fenix }:
     # lib is top-level (not per-system) so consumers access flake.lib.buildGradleProject directly.
-    # buildFlutterApp remains unimplemented until Phase 4.
     {
       lib = (import ./nix/gradle2nix-lib.nix { lib = nixpkgs.lib; })
         // (import ./nix/ios2nix-lib.nix { lib = nixpkgs.lib; })
-        // {
-        buildFlutterApp = _: throw "buildFlutterApp: not implemented — see Phase 4";
-      };
+        // (import ./nix/flutter2nix-lib.nix { lib = nixpkgs.lib; });
     } // flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -140,20 +137,20 @@
             lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
           };
         };
-        # iOS e2e: archive-only per the Phase -1.5 spike (unsigned export is not
-        # feasible — the first functional .ipa is Plan 3's signed e2e). Same
-        # allowed-to-fail tier as the android e2e; dormant until the fixture
-        # iOS lockfile exists.
+        # iOS e2e: unsigned `flutter build ios` of the Flutter fixture against
+        # the unified flutter2nix.lock (android + ios sections — the iOS half
+        # of the composition pipeline). Signed export stays in the cargo-level
+        # signing e2e (needs local material). Darwin-only; same local-only
+        # tier as the android e2e.
         iosE2eTests = pkgs.lib.optionalAttrs (
           pkgs.stdenv.isDarwin
           && builtins.pathExists ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock
         ) {
-          buildIOSApp-e2e = self.lib.buildIOSApp {
+          buildFlutterIOSApp-e2e = self.lib.buildFlutterIOSApp {
             inherit pkgs;
-            name = "ios-archive-e2e";
+            name = "flutter-ios-e2e";
             src = ./tests/fixtures/flutter/minimal-app;
             lockFile = ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock;
-            exportOptions = ./crates/ios2nix/tests/fixtures/xcode-projects/native-app/ExportOptions.plist;
           };
         };
         # Whole-suite aggregate: `nix build .#e2e` realises every e2e entry.

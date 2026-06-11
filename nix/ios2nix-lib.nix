@@ -50,6 +50,8 @@ let
       '') entries;
     in
     pkgs.runCommand "ios-pods-sandbox" { } ''
+      # Always create the base tree — a pod-less lockfile is a valid (empty) sandbox.
+      mkdir -p "$out/pods"
       ${installCmds}
     '';
 
