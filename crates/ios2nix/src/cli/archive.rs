@@ -37,7 +37,10 @@ pub struct ArchiveArgs {
     pub keychain: Option<PathBuf>,
 
     /// Override the product bundle identifier (PRODUCT_BUNDLE_IDENTIFIER),
-    /// e.g. to match a provisioning profile's exact App ID
+    /// e.g. to match a provisioning profile's exact App ID. Applies to EVERY
+    /// target in the build — unsuitable for workspaces with CocoaPods
+    /// framework targets (their IDs collide with the profile map at export);
+    /// stamp the project file instead.
     #[arg(long)]
     pub bundle_id: Option<String>,
 

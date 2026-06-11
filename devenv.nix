@@ -42,8 +42,10 @@ in
     gradle_8
     androidSdk
     jujutsu
-    # ios2nix lock hashes git-source pods via nix-prefetch-git
+    # ios2nix lock hashes git-source pods via nix-prefetch-git;
+    # cocoapods drives pod install for the iOS fixtures and benchmarks
     nix-prefetch-git
+    cocoapods
   ];
 
   env = {

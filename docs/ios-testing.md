@@ -98,12 +98,14 @@ temporary keychain on completion (even on failure). To run the suite by hand:
 `cargo test -p ios2nix --test cli_tests -- --ignored --test-threads=1` with the
 same variables exported.
 
-The same file gates `fnx bench --target ios-build` (signed archive + export →
-time to a real `.ipa`, cold/warm DerivedData). `fnx bench --target ios-lock`
-benchmarks CocoaPods resolution + source hashing against
-`tests/fixtures/ios/bench-podfile/Podfile.lock` and needs no signing material
-(it does need `nix-prefetch-git`, provided by the dev shell). Results append to
-`benchmarks/` like every other target.
+The same file gates `fnx bench --target ios-build`: `pod install` + signed
+archive + export of the `pwa-wrapper-app` fixture (a minimal native app
+wrapping the same Firebase/Messaging pod tree as a production white-label PWA
+wrapper) → time to a real `.ipa`, cold/warm Pods + DerivedData.
+`fnx bench --target ios-lock` benchmarks CocoaPods resolution + source hashing
+against the same fixture's `Podfile.lock` (19 pods) and needs no signing
+material. Both need the dev shell (`nix-prefetch-git`, `pod`). Results append
+to `benchmarks/` like every other target.
 
 ---
 

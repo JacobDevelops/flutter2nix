@@ -32,6 +32,10 @@ tapi-shim/build/**
 !tapi-shim/build/libs/tapi-shim.jar
 **/fixtures/**/.gradle
 
+# CocoaPods state in iOS fixtures — pod install regenerates it from the
+# committed Podfile.lock; only Podfile/Podfile.lock/workspace are tracked.
+**/fixtures/**/Pods/
+
 # Flutter/Dart/Gradle fixture build state
 **/fixtures/**/.dart_tool
 tests/fixtures/flutter/*/build/

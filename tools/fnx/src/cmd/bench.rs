@@ -325,16 +325,21 @@ fn bench_flutter_build(repo_root: &Path) -> anyhow::Result<BenchResult> {
     })
 }
 
-/// `ios2nix lock` against the real-pods Podfile.lock fixture — CocoaPods
-/// resolution + source hashing. Cold fetches every podspec from the CDN and
-/// hashes every pod source (nix-prefetch-git); warm reuses the resolve cache.
+/// Path of the real-world-tier iOS fixture: a minimal native app wrapping the
+/// same Firebase/Messaging pod tree as a production white-label PWA wrapper.
+const PWA_WRAPPER_FIXTURE: &str = "crates/ios2nix/tests/fixtures/xcode-projects/pwa-wrapper-app";
+
+/// `ios2nix lock` against the pwa-wrapper-app Podfile.lock (19 pods incl.
+/// subspecs) — CocoaPods resolution + source hashing. Cold fetches every
+/// podspec from the CDN and hashes every pod source (nix-prefetch-git); warm
+/// reuses the resolve cache.
 fn bench_ios_lock(repo_root: &Path) -> anyhow::Result<BenchResult> {
     require_on_path("nix-prefetch-git")?;
     let bin = build_release_bin(repo_root, "ios2nix")?;
 
     let ios_dir = tempfile::tempdir().context("creating temp ios dir")?;
     std::fs::copy(
-        repo_root.join("tests/fixtures/ios/bench-podfile/Podfile.lock"),
+        repo_root.join(PWA_WRAPPER_FIXTURE).join("Podfile.lock"),
         ios_dir.path().join("Podfile.lock"),
     )
     .context("copying bench Podfile.lock fixture")?;
@@ -362,16 +367,19 @@ fn bench_ios_lock(repo_root: &Path) -> anyhow::Result<BenchResult> {
     })
 }
 
-/// Signed `ios2nix archive` + `ios2nix export` of the native Xcode fixture —
-/// the time-to-signed-.ipa benchmark. Cold uses a fresh DerivedData dir; warm
-/// retains it with the archive/export outputs wiped. Gated on the local
-/// signing env file (see signing_e2e); returns Ok(None) when the gate is
-/// closed so `--target all` can skip instead of fail.
+/// `pod install` + signed `ios2nix archive` + `ios2nix export` of the
+/// pwa-wrapper-app fixture (real Firebase/Messaging pod tree) — the
+/// time-to-signed-.ipa benchmark. Cold runs pod install and a fresh
+/// DerivedData build; warm retains Pods/ and DerivedData with the
+/// archive/export outputs wiped. Gated on the local signing env file (see
+/// signing_e2e); returns Ok(None) when the gate is closed so `--target all`
+/// can skip instead of fail.
 fn bench_ios_build(repo_root: &Path) -> anyhow::Result<Option<BenchResult>> {
     let Some(vars) = super::signing_e2e::load_signing_vars(repo_root)? else {
         return Ok(None);
     };
     require_on_path("xcodebuild")?;
+    require_on_path("pod")?;
     let bin = build_release_bin(repo_root, "ios2nix")?;
 
     // Temp keychain + identity import + profile install; stdout is the
@@ -402,8 +410,25 @@ fn bench_ios_build(repo_root: &Path) -> anyhow::Result<Option<BenchResult>> {
         .unwrap_or_else(|| "ad-hoc".to_string());
     let profile = profile_metadata(Path::new(&vars["IOS2NIX_PROFILE_PATH"]))?;
 
-    let (_tmp, project) =
-        copy_fixture(&repo_root.join("crates/ios2nix/tests/fixtures/xcode-projects/native-app"))?;
+    let (_tmp, project) = copy_fixture(&repo_root.join(PWA_WRAPPER_FIXTURE))?;
+    // Pods/ is gitignored but may exist in a local checkout that ran pod
+    // install — wipe it from the copy so the cold pass is genuinely cold.
+    let pods_dir = project.join("Pods");
+    if pods_dir.exists() {
+        std::fs::remove_dir_all(&pods_dir).context("removing copied Pods dir")?;
+    }
+
+    // Stamp the profile's App ID into the app target's pbxproj (themer-style).
+    // A command-line PRODUCT_BUNDLE_IDENTIFIER override would hit every target
+    // including the pod frameworks, whose IDs then collide with the
+    // provisioningProfiles map and fail the export with "<framework> does not
+    // support provisioning profiles".
+    let pbxproj = project.join("PwaWrapperApp.xcodeproj/project.pbxproj");
+    let stamped = std::fs::read_to_string(&pbxproj)
+        .context("reading fixture pbxproj")?
+        .replace("com.example.pwawrapperapp", &profile.bundle_id);
+    std::fs::write(&pbxproj, stamped).context("stamping bundle id into fixture pbxproj")?;
+
     let derived_data = tempfile::tempdir().context("creating temp DerivedData dir")?;
     let export_opts = project.join("BenchExportOptions.plist");
     write_export_options_plist(&export_opts, &method, &team_id, &identity, &profile)?;
@@ -416,8 +441,8 @@ fn bench_ios_build(repo_root: &Path) -> anyhow::Result<Option<BenchResult>> {
         archive
             .arg("archive")
             .arg("--workspace")
-            .arg(project.join("ExportTest.xcodeproj/project.xcworkspace"))
-            .args(["--scheme", "ExportTest"])
+            .arg(project.join("PwaWrapperApp.xcworkspace"))
+            .args(["--scheme", "PwaWrapperApp"])
             .arg("--archive-path")
             .arg(&archive_path)
             .args(["--team-id", &team_id])
@@ -425,7 +450,6 @@ fn bench_ios_build(repo_root: &Path) -> anyhow::Result<Option<BenchResult>> {
             .args(["--profile-specifier", &profile.name])
             .arg("--keychain")
             .arg(&keychain)
-            .args(["--bundle-id", &profile.bundle_id])
             .arg("--derived-data")
             .arg(derived_data.path());
         let archive_time = run_timed(archive, &format!("ios-build archive ({phase})"))?;
@@ -444,8 +468,13 @@ fn bench_ios_build(repo_root: &Path) -> anyhow::Result<Option<BenchResult>> {
         Ok(archive_time + export_time)
     };
 
-    let cold = pass("cold")?;
-    // CI-warm semantics: retain DerivedData, wipe what the pass produced.
+    // pod install belongs to the cold pass: a cache-less CI runner pays it.
+    let mut pod_install = Command::new("pod");
+    pod_install.arg("install").current_dir(&project);
+    let pods_time = run_timed(pod_install, "ios-build pod install (cold)")?;
+
+    let cold = pods_time + pass("cold")?;
+    // CI-warm semantics: retain Pods/ and DerivedData, wipe what the pass produced.
     for output in [&archive_path, &ipa_dir] {
         if output.exists() {
             std::fs::remove_dir_all(output)

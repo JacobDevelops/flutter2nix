@@ -14,3 +14,5 @@ the host is recorded per run in history.jsonl.
 | 2026-06-10T23:38:10+1000 | b6e92a760db7 | lock | 164.4s | 9.9s |
 | 2026-06-11T20:19:22+1000 | 95d6b771a479 | ios-lock | 3.4s | 0.1s |
 | 2026-06-11T20:19:58+1000 | 688ff1b067d9 | ios-build | 19.2s | 13.9s |
+| 2026-06-11T20:41:53+1000 | ec8d2c3a28a1 | ios-lock | 12.9s | 0.3s |
+| 2026-06-11T20:52:50+1000 | e48a3770c588 | ios-build | 29.2s | 22.6s |
