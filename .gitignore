@@ -40,6 +40,11 @@ tests/fixtures/flutter/*/android/app/build/
 tests/fixtures/gradle/*/build/
 tests/fixtures/gradle/*/app/build/
 
+# Local iOS signing material for the fnx signing e2e (paths + IDs; the .p12
+# password is referenced via IOS2NIX_P12_PASSWORD_FILE). Machine-specific,
+# never committed.
+.ios2nix-signing.env
+
 # OMC
 .omc/notepad.md
 .omc/specs

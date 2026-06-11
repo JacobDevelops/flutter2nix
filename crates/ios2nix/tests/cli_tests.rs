@@ -109,6 +109,19 @@ struct SigningMaterial {
     profile: ios2nix::provisioning::ProfileInfo,
 }
 
+/// `sign_setup::run` persists the keychain (it must outlive that process for
+/// the Nix flow); inside the test process we own cleanup — delete it (which
+/// also drops its search-list entry) even when an assertion panics.
+#[cfg(target_os = "macos")]
+impl Drop for SigningMaterial {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("security")
+            .arg("delete-keychain")
+            .arg(&self.keychain)
+            .output();
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn setup_signing_from_env() -> SigningMaterial {
     use std::path::PathBuf;

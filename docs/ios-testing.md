@@ -69,6 +69,37 @@ before_script:
 
 ---
 
+## Running the Signing e2e Suite via fnx
+
+The `#[ignore]`-gated signing integration tests (`test_cli_export_ipa_with_codesign`,
+`test_cli_full_e2e_lock_to_ipa` in `crates/ios2nix/tests/cli_tests.rs`) run real
+`security`/`xcodebuild`/`codesign` against real signing material. They are wired into
+`fnx check` the same way the Android/Flutter e2e derivations are: local-dev only,
+never in CI (CI runs neither `fnx` nor ignored cargo tests).
+
+The gate is an untracked env file at the repo root, `.ios2nix-signing.env`
+(KEY=VALUE lines, `#` comments). When present, `fnx check` runs the suite with that
+environment; when absent, it prints a skip note. Example:
+
+```ini
+IOS2NIX_P12_PATH=/path/to/distribution.p12
+# Keeps the password itself out of this file:
+IOS2NIX_P12_PASSWORD_FILE=/path/to/distribution.password
+IOS2NIX_PROFILE_PATH=/Users/me/Library/MobileDevice/Provisioning Profiles/MyApp.mobileprovision
+IOS2NIX_TEAM_ID=TEAM123456
+IOS2NIX_SIGNING_IDENTITY=Apple Distribution: Example Corp (TEAM123456)
+# Must match the profile kind (ad-hoc | app-store | ...); default ad-hoc:
+IOS2NIX_EXPORT_METHOD=app-store
+```
+
+`IOS2NIX_KEYCHAIN_PASSWORD` is generated per run if not set. The tests override the
+fixture app's bundle ID from the profile's App ID automatically and delete their
+temporary keychain on completion (even on failure). To run the suite by hand:
+`cargo test -p ios2nix --test cli_tests -- --ignored --test-threads=1` with the
+same variables exported.
+
+---
+
 ## Walkthrough: Lock → Build → Archive → Export → Sign
 
 Assume an iOS Flutter app in `flutter-app/` with the env vars set (see above).
