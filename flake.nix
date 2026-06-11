@@ -129,13 +129,14 @@
             lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
             gradleTask = "assembleRelease";
           };
-          # Full Flutter appbundle build.
-          buildFlutterAndroidApp-e2e = self.lib.buildFlutterAndroidApp {
+          # Full Flutter appbundle build (via buildFlutterApp dispatcher).
+          # Uses the unified lockfile (ios/flutter2nix.lock has both android+ios sections).
+          buildFlutterAndroidApp-e2e = (self.lib.buildFlutterApp {
             inherit pkgs androidSdk;
             name = "flutter-android-e2e";
             src = ./tests/fixtures/flutter/minimal-app;
-            lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
-          };
+            lockFile = ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock;
+          }).android;
         };
         # iOS e2e: unsigned `flutter build ios` of the Flutter fixture against
         # the unified flutter2nix.lock (android + ios sections — the iOS half
@@ -146,12 +147,13 @@
           pkgs.stdenv.isDarwin
           && builtins.pathExists ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock
         ) {
-          buildFlutterIOSApp-e2e = self.lib.buildFlutterIOSApp {
+          # Build unsigned iOS app (via buildFlutterApp dispatcher).
+          buildFlutterIOSApp-e2e = (self.lib.buildFlutterApp {
             inherit pkgs;
             name = "flutter-ios-e2e";
             src = ./tests/fixtures/flutter/minimal-app;
             lockFile = ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock;
-          };
+          }).ios;
         };
         # Whole-suite aggregate: `nix build .#e2e` realises every e2e entry.
         # Empty no-op derivation when the platform/fixture gates are closed.
@@ -261,6 +263,20 @@
           assert result.url == "https://github.com/jdg/MBProgressHUD.git";
           assert result.rev == "bca42b801100b2b3a4eda0ba8dd33d858c780b0d";
           pkgs.runCommand "ios2nix-split-git-url-eval" { } "touch $out";
+          # Verifies buildFlutterApp dispatcher works on both platforms.
+          # On Linux: android is present (androidSdk provided, isLinux=true).
+          # On Darwin: ios is present (isDarwin=true, android filtered).
+          buildFlutterApp-eval = let
+            result = self.lib.buildFlutterApp {
+              inherit pkgs;
+              name = "build-flutter-app-eval";
+              src = ./tests/fixtures/flutter/minimal-app;
+              lockFile = ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock;
+              androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
+            };
+            drv = result.android or result.ios;
+          in builtins.seq drv.drvPath
+             (pkgs.runCommand "buildFlutterApp-eval" { } "touch $out");
           default = pkgs.runCommand "flake-check-ok" { } "echo ok > $out";
         # iOS checks are darwin-gated; ios-pods-sandbox-test realises a real
         # fixed-output git fetch (analogue of android-maven-repo-test).

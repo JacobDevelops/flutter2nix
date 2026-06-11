@@ -264,3 +264,119 @@ fn test_cli_full_e2e_lock_to_ipa() {
         "IPA should contain Payload/<App>.app/Info.plist"
     );
 }
+
+#[cfg(target_os = "macos")]
+fn copy_flutter_app_fixture(tmpdir: &std::path::Path) -> std::path::PathBuf {
+    let fixture_src = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/flutter/minimal-app");
+    let fixture_dst = tmpdir.join("minimal-app");
+    copy_dir_all(&fixture_src, &fixture_dst).expect("failed to copy Flutter fixture");
+    fixture_dst
+}
+
+#[cfg(target_os = "macos")]
+fn find_flutter_root() -> std::path::PathBuf {
+    let output = std::process::Command::new("which")
+        .arg("flutter")
+        .output()
+        .expect("flutter not found in PATH for Flutter e2e test");
+    assert!(output.status.success(), "which flutter failed");
+    let flutter_bin = std::path::PathBuf::from(
+        String::from_utf8_lossy(&output.stdout).trim()
+    );
+    let resolved = std::fs::canonicalize(&flutter_bin).unwrap_or(flutter_bin);
+    resolved.parent().and_then(|p| p.parent())
+        .expect("cannot resolve flutter root from binary path")
+        .to_path_buf()
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires signing material via IOS2NIX_* env"]
+fn test_cli_flutter_e2e_to_signed_ipa() {
+    let signing = setup_signing_from_env();
+
+    let tmpdir = tempfile::TempDir::new().expect("failed to create tempdir");
+    let fixture_dst = copy_flutter_app_fixture(tmpdir.path());
+
+    // Regenerate ios/Flutter/Generated.xcconfig with the correct Flutter SDK root
+    let flutter_root = find_flutter_root();
+    let generated_xcconfig = fixture_dst.join("ios/Flutter/Generated.xcconfig");
+    let xcconfig_content = format!(
+        "FLUTTER_ROOT={}\nFLUTTER_APPLICATION_PATH={}\nCOCOAPODS_PARALLEL_CODE_SIGN=true\n\
+         FLUTTER_TARGET=lib/main.dart\nFLUTTER_BUILD_DIR=build\nFLUTTER_BUILD_NAME=1.0.0\n\
+         FLUTTER_BUILD_NUMBER=1\nDART_OBFUSCATION=false\nTRACK_WIDGET_CREATION=true\n\
+         TREE_SHAKE_ICONS=false\n",
+        flutter_root.display(),
+        fixture_dst.display()
+    );
+    std::fs::write(&generated_xcconfig, xcconfig_content)
+        .expect("failed to write Generated.xcconfig");
+
+    // Stamp the pbxproj with the profile's bundle ID
+    let pbxproj_path = fixture_dst.join("ios/Runner.xcodeproj/project.pbxproj");
+    let pbxproj_content = std::fs::read_to_string(&pbxproj_path)
+        .expect("failed to read project.pbxproj");
+    let stamped = pbxproj_content.replace(
+        "PRODUCT_BUNDLE_IDENTIFIER = com.example.minimalApp;",
+        &format!("PRODUCT_BUNDLE_IDENTIFIER = {};", signing.profile.bundle_id),
+    );
+    std::fs::write(&pbxproj_path, stamped)
+        .expect("failed to write stamped project.pbxproj");
+
+    // Archive (signed)
+    let archive_path = ios2nix::cli::archive::run(ios2nix::cli::archive::ArchiveCommand {
+        workspace: fixture_dst.join("ios/Runner.xcworkspace"),
+        scheme: "Runner".to_string(),
+        configuration: "Release".to_string(),
+        archive_path: fixture_dst.join("ios/out.xcarchive"),
+        signing: Some(ios2nix::export_opts::SigningConfig {
+            team_id: signing.team_id.clone(),
+            identity: signing.identity.clone(),
+            profile_specifier: signing.profile.name.clone(),
+            keychain: signing.keychain.clone(),
+        }),
+        bundle_id: None,
+        derived_data: None,
+    })
+    .expect("Flutter archive should succeed");
+
+    // Export with ExportOptions.plist
+    let method = std::env::var("IOS2NIX_EXPORT_METHOD")
+        .unwrap_or_else(|_| "ad-hoc".to_string())
+        .parse::<ios2nix::export_opts::ExportMethod>()
+        .expect("IOS2NIX_EXPORT_METHOD must be a valid export method");
+    let mut export_opts = ios2nix::export_opts::ExportOptions::new(method, signing.team_id.clone());
+    export_opts.signing_certificate = Some(signing.identity.clone());
+    export_opts.provisioning_profiles.insert(
+        signing.profile.bundle_id.clone(),
+        signing.profile.uuid.clone(),
+    );
+
+    let export_opts_plist = fixture_dst.join("ExportOptions.plist");
+    ios2nix::export_opts::write_export_options(
+        &export_opts,
+        ios2nix::export_opts::resolve_method_name_style(),
+        &export_opts_plist,
+    )
+    .expect("should write ExportOptions.plist");
+
+    let ipa_path = ios2nix::cli::export::run(ios2nix::cli::export::ExportCommand {
+        archive_path,
+        export_opts_plist,
+        output_path: fixture_dst.join("ipa"),
+    })
+    .expect("Flutter export should succeed");
+    assert!(ipa_path.exists(), "exported Flutter IPA should exist");
+
+    // Verify code signature
+    let verify_output = std::process::Command::new("codesign")
+        .args(["--verify", "--deep", "--strict"])
+        .arg(&ipa_path)
+        .output()
+        .expect("failed to run codesign verify");
+    assert!(
+        verify_output.status.success(),
+        "Flutter IPA should pass code signature verification"
+    );
+}

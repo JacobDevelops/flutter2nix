@@ -5,22 +5,24 @@
 let
   pubLib = import ./pub-lib.nix { inherit lib; };
   iosLib = import ./ios2nix-lib.nix { inherit lib; };
-in
-{
-  # Builds the unsigned iOS .app for a Flutter project.
+  androidLib = import ./gradle2nix-lib.nix { inherit lib; };
+
+  # Builds the unsigned iOS .app for a Flutter project, or a signed .ipa when signing is provided.
   #
   # The Dart side is hermetic: a Nix-generated package_config.json replaces
   # `pub get`, and the pod sandbox is content-addressed from the lockfile's
   # ios section. The Xcode side is impure (__noChroot): /usr/bin/xcodebuild
   # dispatches through xcode-select, and the .app is not bit-reproducible.
-  # Signing/.ipa export is the ios2nix archive/export pipeline's job — this
-  # builder stops at an unsigned device build.
+  #
+  # When signing is null: builds an unsigned device .app (CODE_SIGNING_ALLOWED=NO, build).
+  # When signing is provided: builds a signed archive and exports to .ipa using
+  # exportOptions. The signing attrset has the shape { teamId, identity, profileSpecifier, ios2nix? }.
   #
   # KNOWN LIMITATION: asset catalogs and storyboards cannot compile in a Nix
   # derivation — actool/ibtool spawn XPC helpers that resolve the build user's
-  # passwd home (/var/empty) and need a CoreSimulator user context. Apps that
-  # ship them must build through the impure ios2nix CLI pipeline (which runs
-  # as the real user); the e2e fixture is storyboard- and catalog-free.
+  # passwd home (/var/empty) and need a CoreSimulator user context. Only viable
+  # for storyboard/catalog-free apps; apps with asset catalogs or real CocoaPods
+  # must use the ios2nix CLI pipeline (see plan 4 §2a).
   #
   # Parameters:
   #   pkgs            — nixpkgs attribute set
@@ -30,6 +32,8 @@ in
   #   pubspecLockFile — pubspec.lock (default: src + /pubspec.lock)
   #   gitHashes       — pub git dependency hashes (pub2nix)
   #   flutterSdk      — Flutter SDK (default: pkgs.flutter)
+  #   signing         — null (unsigned) or { teamId, identity, profileSpecifier, ios2nix? }
+  #   exportOptions   — path to ExportOptions.plist (required if signing != null)
   buildFlutterIOSApp =
     { pkgs
     , name
@@ -38,6 +42,8 @@ in
     , pubspecLockFile ? src + "/pubspec.lock"
     , gitHashes ? { }
     , flutterSdk ? pkgs.flutter
+    , signing ? null
+    , exportOptions ? null
     , ...
     }:
     let
@@ -50,7 +56,8 @@ in
       inherit name src;
       __noChroot = true;
       meta.platforms = lib.platforms.darwin;
-      buildInputs = [ pkgs.cocoapods flutterSdk ];
+      buildInputs = [ pkgs.cocoapods flutterSdk ]
+        ++ lib.optionals (signing != null) [ (signing.ios2nix or pkgs.ios2nix) ];
       buildPhase = ''
         runHook preBuild
         export HOME="$NIX_BUILD_TOP"
@@ -125,32 +132,143 @@ in
 
         "''${sanitized_env[@]}" sh -c 'cd ios && pod install --no-repo-update'
 
-        # HOME/PATH as explicit build settings: xcodebuild rebuilds the env for
-        # script phases, dropping both. xcode_backend.sh's flutter invocation
-        # needs a writable HOME (it falls back to the build user's /var/empty)
-        # and resolves codesign via PATH (which must hit the shim above).
-        "''${sanitized_env[@]}" xcodebuild \
-          -workspace ios/Runner.xcworkspace \
-          -scheme Runner \
-          -configuration Release \
-          -destination 'generic/platform=iOS' \
-          -derivedDataPath "$NIX_BUILD_TOP/DerivedData" \
-          CODE_SIGNING_ALLOWED=NO \
-          HOME="$HOME" \
-          PATH="$NIX_BUILD_TOP/shims:/usr/bin:/bin:/usr/sbin:/sbin" \
-          build
+        # If signing is requested, set up the temporary keychain and partition list.
+        ${lib.optionalString (signing != null) ''
+          IOS2NIX_KEYCHAIN_PATH=$(ios2nix sign-setup \
+            --p12 "$IOS2NIX_P12_PATH" \
+            --profile "$IOS2NIX_PROFILE_PATH")
+          export IOS2NIX_KEYCHAIN_PATH
+          trap '[ -n "''${IOS2NIX_KEYCHAIN_PATH}" ] && security delete-keychain "''${IOS2NIX_KEYCHAIN_PATH}" 2>/dev/null || true' EXIT
+        ''}
+
+        # Build: either unsigned (build) or signed (archive).
+        ${if signing != null then ''
+          "''${sanitized_env[@]}" xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$NIX_BUILD_TOP/DerivedData" \
+            DEVELOPMENT_TEAM="${signing.teamId}" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="${signing.identity}" \
+            PROVISIONING_PROFILE_SPECIFIER="${signing.profileSpecifier}" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $IOS2NIX_KEYCHAIN_PATH" \
+            HOME="$HOME" \
+            PATH="$NIX_BUILD_TOP/shims:/usr/bin:/bin:/usr/sbin:/sbin" \
+            archive -archivePath "$NIX_BUILD_TOP/app.xcarchive"
+
+          # Export the archive to IPA.
+          env -i HOME="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+            IOS2NIX_KEYCHAIN_PATH="$IOS2NIX_KEYCHAIN_PATH" \
+            xcodebuild -exportArchive \
+            -archivePath "$NIX_BUILD_TOP/app.xcarchive" \
+            -exportOptionsPlist ${exportOptions} \
+            -exportPath "$NIX_BUILD_TOP/export"
+        '' else ''
+          "''${sanitized_env[@]}" xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$NIX_BUILD_TOP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            HOME="$HOME" \
+            PATH="$NIX_BUILD_TOP/shims:/usr/bin:/bin:/usr/sbin:/sbin" \
+            build
+        ''}
 
         runHook postBuild
       '';
       installPhase = ''
         runHook preInstall
         mkdir -p $out
-        cp -R "$NIX_BUILD_TOP/DerivedData/Build/Products/Release-iphoneos/"*.app $out/
+
+        ${if signing != null then ''
+          # Copy IPA from export
+          for ipa in "$NIX_BUILD_TOP"/export/*.ipa; do
+            [ -e "$ipa" ] && cp "$ipa" $out/
+          done
+        '' else ''
+          # Copy unsigned .app
+          cp -R "$NIX_BUILD_TOP/DerivedData/Build/Products/Release-iphoneos/"*.app $out/
+        ''}
+
         runHook postInstall
       '';
     };
 
-  # Unified Android + iOS entry point — pending; use buildFlutterAndroidApp /
-  # buildFlutterIOSApp directly.
-  buildFlutterApp = _: throw "buildFlutterApp: unified entry point not implemented — use buildFlutterAndroidApp / buildFlutterIOSApp";
+  # Unified entry point for building Flutter apps for one or more platforms.
+  # Dispatches to buildFlutterAndroidApp (Android) and buildFlutterIOSApp (iOS)
+  # based on the platforms parameter and host platform capabilities.
+  #
+  # Parameters:
+  #   pkgs            — nixpkgs attribute set
+  #   name            — derivation name
+  #   src             — Flutter project root
+  #   lockFile        — flutter2nix lockfile (must have android.nodes and/or ios.nodes)
+  #   platforms       — list of platforms to build (default: ["android" "ios"])
+  #   androidSdk      — Android SDK (required for Android builds, default: null)
+  #   signing         — null or signing config for iOS (passed to buildFlutterIOSApp)
+  #   exportOptions   — path to ExportOptions.plist (passed to buildFlutterIOSApp)
+  #   ...             — other parameters passed through to the platform builders
+  #
+  # Returns an attrset with keys for each built platform (e.g., { android = drv; ios = drv; })
+  buildFlutterApp =
+    { pkgs
+    , name
+    , src
+    , lockFile
+    , platforms ? [ "android" "ios" ]
+    , androidSdk ? null
+    , signing ? null
+    , ...
+    }@args:
+    let
+      lock = builtins.fromJSON (builtins.readFile lockFile);
+      wantsAndroid = builtins.elem "android" platforms;
+      wantsIos = builtins.elem "ios" platforms;
+
+      # Throw for missing lockfile sections (before host-capability filtering).
+      _sectionCheck =
+        (if wantsAndroid && !(lock ? android)
+         then throw "buildFlutterApp: lockfile ${toString lockFile} has no 'android' section"
+         else [ ])
+        ++ (if wantsIos && !(lock ? ios)
+            then throw "buildFlutterApp: lockfile ${toString lockFile} has no 'ios' section"
+            else [ ]);
+
+      canBuildAndroid = pkgs.stdenv.isLinux && androidSdk != null;
+      canBuildIos = pkgs.stdenv.isDarwin;
+
+      passThrough = {
+        pubspecLockFile = args.pubspecLockFile or (src + "/pubspec.lock");
+        gitHashes = args.gitHashes or { };
+        flutterSdk = args.flutterSdk or pkgs.flutter;
+      };
+
+      androidDrv = androidLib.buildFlutterAndroidApp (passThrough // {
+        inherit pkgs name src lockFile androidSdk;
+        jdk = args.jdk or pkgs.jdk17;
+        gradleFlags = args.gradleFlags or [];
+      });
+
+      iosDrv = buildFlutterIOSApp (passThrough // {
+        inherit pkgs name src lockFile signing;
+        exportOptions = args.exportOptions or null;
+      });
+
+      result = { }
+        // lib.optionalAttrs (wantsAndroid && canBuildAndroid) { android = androidDrv; }
+        // lib.optionalAttrs (wantsIos && canBuildIos) { ios = iosDrv; };
+    in
+    builtins.seq _sectionCheck (
+      if result == { }
+      then throw "buildFlutterApp: no requested platforms (${lib.concatStringsSep ", " platforms}) can be built on ${pkgs.stdenv.hostPlatform.system}"
+      else result
+    );
+
+in
+{
+  inherit buildFlutterIOSApp buildFlutterApp;
 }
