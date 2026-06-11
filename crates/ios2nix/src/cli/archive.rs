@@ -47,6 +47,12 @@ pub struct ArchiveArgs {
     /// DerivedData path (xcodebuild -derivedDataPath); reuse across runs for warm builds
     #[arg(long)]
     pub derived_data: Option<PathBuf>,
+
+    /// Directories prepended to the sanitized PATH given to xcodebuild
+    /// (colon-separated). Script phases inherit it — use for codesign shims
+    /// or SDK tools the build needs beyond /usr/bin.
+    #[arg(long)]
+    pub extra_path: Option<String>,
 }
 
 pub struct ArchiveCommand {
@@ -55,8 +61,18 @@ pub struct ArchiveCommand {
     pub configuration: String,
     pub archive_path: PathBuf,
     pub signing: Option<SigningConfig>,
+    /// When set with `signing: None`, passes only `OTHER_CODE_SIGN_FLAGS=--keychain <path>`.
+    /// Use this when signing settings are stamped directly into the pbxproj (e.g. Flutter
+    /// workspaces where global CODE_SIGN_STYLE/PROVISIONING_PROFILE_SPECIFIER flags also
+    /// apply to Pods-Runner, which does not support provisioning profiles).
+    pub keychain_path: Option<PathBuf>,
     pub bundle_id: Option<String>,
     pub derived_data: Option<PathBuf>,
+    /// Directories prepended to the sanitized PATH (colon-separated). Script
+    /// phases (Flutter's xcode_backend) inherit the xcodebuild PATH, so this
+    /// is the only way to interpose tools like a codesign shim — Xcode ignores
+    /// PATH passed as a command-line build setting.
+    pub extra_path: Option<String>,
 }
 
 impl ArchiveCommand {
@@ -89,8 +105,10 @@ impl ArchiveCommand {
             configuration: args.configuration.clone(),
             archive_path: args.archive_path.clone(),
             signing,
+            keychain_path: None,
             bundle_id: args.bundle_id.clone(),
             derived_data: args.derived_data.clone(),
+            extra_path: args.extra_path.clone(),
         })
     }
 }
@@ -124,6 +142,15 @@ fn xcodebuild_args(cmd: &ArchiveCommand) -> Vec<String> {
         args.push(format!(
             "OTHER_CODE_SIGN_FLAGS=--keychain {}",
             signing.keychain.to_string_lossy()
+        ));
+    } else if let Some(keychain) = &cmd.keychain_path {
+        // Signing settings are stamped in the pbxproj; only provide keychain access so
+        // codesign can find the imported certificate. Avoids global CODE_SIGN_STYLE=Manual
+        // / PROVISIONING_PROFILE_SPECIFIER flags that would also apply to Pods-Runner
+        // (a CocoaPods aggregator that rejects provisioning profiles).
+        args.push(format!(
+            "OTHER_CODE_SIGN_FLAGS=--keychain {}",
+            keychain.to_string_lossy()
         ));
     } else {
         args.push("CODE_SIGNING_ALLOWED=NO".to_string());
@@ -177,6 +204,12 @@ pub fn run(cmd: ArchiveCommand) -> anyhow::Result<PathBuf> {
 
         let mut xcode_cmd = std::process::Command::new("xcodebuild");
         env.apply_to(&mut xcode_cmd);
+        if let Some(extra_path) = &cmd.extra_path {
+            xcode_cmd.env(
+                "PATH",
+                format!("{}:{}", extra_path, crate::xcode::env::SANITIZED_PATH),
+            );
+        }
         xcode_cmd.args(xcodebuild_args(&cmd));
 
         let output = xcode_cmd

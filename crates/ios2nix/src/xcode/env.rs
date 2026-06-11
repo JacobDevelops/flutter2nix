@@ -37,9 +37,14 @@ pub fn resolve_developer_dir(
     fallback()
 }
 
+/// The PATH forced onto xcodebuild by `sanitized_env` — system dirs only.
+/// Callers that need extra tools visible to script phases (e.g. a codesign
+/// shim) prepend to this rather than relying on the ambient PATH.
+pub const SANITIZED_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+
 /// Drop environment variables that must never reach xcodebuild.
 /// Strips NIX_*, CC, CXX, LD, SDKROOT, DEVELOPER_DIR, CPATH, LIBRARY_PATH, MACOSX_DEPLOYMENT_TARGET.
-/// Forces PATH to "/usr/bin:/bin:/usr/sbin:/sbin".
+/// Forces PATH to `SANITIZED_PATH`.
 /// Spike Finding 4: a Nix dev shell exports these vars; any reaching xcodebuild breaks device builds.
 pub fn sanitized_env(vars: impl IntoIterator<Item = (String, String)>) -> Vec<(String, String)> {
     let blocked_prefixes = ["NIX_"];
@@ -62,7 +67,7 @@ pub fn sanitized_env(vars: impl IntoIterator<Item = (String, String)>) -> Vec<(S
         })
         .chain(std::iter::once((
             "PATH".to_string(),
-            "/usr/bin:/bin:/usr/sbin:/sbin".to_string(),
+            SANITIZED_PATH.to_string(),
         )))
         .collect()
 }

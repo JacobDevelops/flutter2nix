@@ -30,8 +30,10 @@ fn test_archive_args_unsigned() {
         configuration: "Release".to_string(),
         archive_path: std::path::PathBuf::from("out.xcarchive"),
         signing: None,
+        keychain_path: None,
         bundle_id: None,
         derived_data: None,
+        extra_path: None,
     };
 
     let args = xcodebuild_args(&cmd);
@@ -48,14 +50,16 @@ fn test_archive_args_signed() {
         scheme: "Runner".to_string(),
         configuration: "Release".to_string(),
         archive_path: std::path::PathBuf::from("out.xcarchive"),
-        bundle_id: None,
-        derived_data: None,
         signing: Some(SigningConfig {
             team_id: "TEAM123456".to_string(),
             identity: "Apple Distribution: Example Corp (TEAM123456)".to_string(),
             profile_specifier: "My Profile".to_string(),
             keychain: std::path::PathBuf::from("/path/to/keychain"),
         }),
+        keychain_path: None,
+        bundle_id: None,
+        derived_data: None,
+        extra_path: None,
     };
 
     let args = xcodebuild_args(&cmd);
@@ -73,6 +77,33 @@ fn test_archive_args_signed() {
         .any(|a| a.starts_with("OTHER_CODE_SIGN_FLAGS=--keychain")));
     // Make sure we don't have CODE_SIGNING_ALLOWED=NO for signed
     assert!(!args.contains(&"CODE_SIGNING_ALLOWED=NO".to_string()));
+}
+
+#[test]
+fn test_archive_args_keychain_only() {
+    let cmd = ArchiveCommand {
+        workspace: std::path::PathBuf::from("ios/Runner.xcworkspace"),
+        scheme: "Runner".to_string(),
+        configuration: "Release".to_string(),
+        archive_path: std::path::PathBuf::from("out.xcarchive"),
+        signing: None,
+        keychain_path: Some(std::path::PathBuf::from("/tmp/my.keychain-db")),
+        bundle_id: None,
+        derived_data: None,
+        extra_path: None,
+    };
+
+    let args = xcodebuild_args(&cmd);
+    assert!(args.contains(&"archive".to_string()));
+    assert!(args
+        .iter()
+        .any(|a| a.starts_with("OTHER_CODE_SIGN_FLAGS=--keychain")));
+    // Must not add global signing overrides — they would apply to Pods-Runner too.
+    assert!(!args.contains(&"CODE_SIGNING_ALLOWED=NO".to_string()));
+    assert!(!args.contains(&"CODE_SIGN_STYLE=Manual".to_string()));
+    assert!(!args
+        .iter()
+        .any(|a| a.starts_with("PROVISIONING_PROFILE_SPECIFIER=")));
 }
 
 #[cfg(target_os = "macos")]
@@ -109,8 +140,10 @@ fn test_archive_create_xcarchive() {
         configuration: "Release".to_string(),
         archive_path: fixture_dst.join("out.xcarchive"),
         signing: None,
+        keychain_path: None,
         bundle_id: None,
         derived_data: None,
+        extra_path: None,
     };
 
     let result = run(cmd);

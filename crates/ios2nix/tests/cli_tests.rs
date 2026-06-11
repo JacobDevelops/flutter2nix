@@ -91,8 +91,10 @@ fn test_cli_archive_from_build() {
         configuration: "Release".to_string(),
         archive_path: fixture_dst.join("out.xcarchive"),
         signing: None,
+        keychain_path: None,
         bundle_id: None,
         derived_data: None,
+        extra_path: None,
     };
 
     let result = ios2nix::cli::archive::run(cmd);
@@ -172,10 +174,12 @@ fn signed_archive_command(
             profile_specifier: signing.profile.name.clone(),
             keychain: signing.keychain.clone(),
         }),
+        keychain_path: None,
         // The fixture's own bundle ID won't match the supplied profile's App ID;
         // override it so any exact-match profile works.
         bundle_id: Some(signing.profile.bundle_id.clone()),
         derived_data: None,
+        extra_path: None,
     }
 }
 
@@ -281,11 +285,11 @@ fn find_flutter_root() -> std::path::PathBuf {
         .output()
         .expect("flutter not found in PATH for Flutter e2e test");
     assert!(output.status.success(), "which flutter failed");
-    let flutter_bin = std::path::PathBuf::from(
-        String::from_utf8_lossy(&output.stdout).trim()
-    );
+    let flutter_bin = std::path::PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
     let resolved = std::fs::canonicalize(&flutter_bin).unwrap_or(flutter_bin);
-    resolved.parent().and_then(|p| p.parent())
+    resolved
+        .parent()
+        .and_then(|p| p.parent())
         .expect("cannot resolve flutter root from binary path")
         .to_path_buf()
 }
@@ -313,31 +317,72 @@ fn test_cli_flutter_e2e_to_signed_ipa() {
     std::fs::write(&generated_xcconfig, xcconfig_content)
         .expect("failed to write Generated.xcconfig");
 
-    // Stamp the pbxproj with the profile's bundle ID
+    // Stamp bundle ID and manual signing settings into each Runner target configuration.
+    // Flutter workspaces contain a Pods-Runner aggregator target that rejects provisioning
+    // profiles. Passing CODE_SIGN_STYLE=Manual / PROVISIONING_PROFILE_SPECIFIER as global
+    // xcodebuild flags hits Pods-Runner and fails. Stamping at the pbxproj level (Runner
+    // target scope only) + archive with keychain_path avoids the collision.
     let pbxproj_path = fixture_dst.join("ios/Runner.xcodeproj/project.pbxproj");
-    let pbxproj_content = std::fs::read_to_string(&pbxproj_path)
-        .expect("failed to read project.pbxproj");
+    let pbxproj_content =
+        std::fs::read_to_string(&pbxproj_path).expect("failed to read project.pbxproj");
+    // Each Runner target config (Debug/Release/Profile) contains this bundle ID; RunnerTests
+    // configs contain "com.example.minimalApp.RunnerTests" and are unaffected.
     let stamped = pbxproj_content.replace(
         "PRODUCT_BUNDLE_IDENTIFIER = com.example.minimalApp;",
-        &format!("PRODUCT_BUNDLE_IDENTIFIER = {};", signing.profile.bundle_id),
+        &format!(
+            "\"CODE_SIGN_IDENTITY[sdk=iphoneos*]\" = \"{identity}\";\n\
+             \t\t\t\tCODE_SIGN_STYLE = Manual;\n\
+             \t\t\t\tDEVELOPMENT_TEAM = {team};\n\
+             \t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = {bundle_id};\n\
+             \t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"{profile}\";",
+            identity = signing.identity,
+            team = signing.team_id,
+            bundle_id = signing.profile.bundle_id,
+            profile = signing.profile.name,
+        ),
     );
-    std::fs::write(&pbxproj_path, stamped)
-        .expect("failed to write stamped project.pbxproj");
+    std::fs::write(&pbxproj_path, stamped).expect("failed to write stamped project.pbxproj");
 
-    // Archive (signed)
+    // flutter assemble copies Flutter.framework out of the Flutter SDK cache and
+    // re-signs the copy in place; with a Nix-store SDK the copy keeps mode 444 and
+    // codesign fails with EACCES. Shim codesign to make its target writable first
+    // (same workaround as buildFlutterIOSApp). archive::run sanitizes the
+    // xcodebuild env and forces PATH, so the shim is injected via extra_path —
+    // script phases inherit the xcodebuild PATH.
+    let shim_dir = tmpdir.path().join("shims");
+    std::fs::create_dir_all(&shim_dir).expect("failed to create shim dir");
+    let shim = shim_dir.join("codesign");
+    std::fs::write(
+        &shim,
+        "#!/bin/sh\n\
+         for arg do target=\"$arg\"; done\n\
+         if [ -e \"$target\" ]; then\n\
+         \tchmod -R u+w \"$(dirname \"$target\")\" 2>/dev/null || true\n\
+         fi\n\
+         exec /usr/bin/codesign \"$@\"\n",
+    )
+    .expect("failed to write codesign shim");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .expect("failed to chmod codesign shim");
+    }
+    // Archive: signing is driven by the stamped pbxproj; keychain_path gives codesign
+    // access to the imported certificate without applying global signing overrides.
     let archive_path = ios2nix::cli::archive::run(ios2nix::cli::archive::ArchiveCommand {
         workspace: fixture_dst.join("ios/Runner.xcworkspace"),
         scheme: "Runner".to_string(),
         configuration: "Release".to_string(),
         archive_path: fixture_dst.join("ios/out.xcarchive"),
-        signing: Some(ios2nix::export_opts::SigningConfig {
-            team_id: signing.team_id.clone(),
-            identity: signing.identity.clone(),
-            profile_specifier: signing.profile.name.clone(),
-            keychain: signing.keychain.clone(),
-        }),
+        signing: None,
+        keychain_path: Some(signing.keychain.clone()),
         bundle_id: None,
-        derived_data: None,
+        derived_data: Some(tmpdir.path().join("DerivedData")),
+        extra_path: Some(format!(
+            "{}:{}",
+            shim_dir.display(),
+            flutter_root.join("bin").display(),
+        )),
     })
     .expect("Flutter archive should succeed");
 
@@ -369,14 +414,33 @@ fn test_cli_flutter_e2e_to_signed_ipa() {
     .expect("Flutter export should succeed");
     assert!(ipa_path.exists(), "exported Flutter IPA should exist");
 
-    // Verify code signature
+    // Verify code signature: codesign cannot read a zip, so unpack the IPA
+    // and verify the .app bundle inside Payload/.
+    let unpack_dir = fixture_dst.join("ipa-unpacked");
+    let unzip_output = std::process::Command::new("unzip")
+        .args(["-q", "-o"])
+        .arg(&ipa_path)
+        .arg("-d")
+        .arg(&unpack_dir)
+        .output()
+        .expect("failed to run unzip");
+    assert!(unzip_output.status.success(), "IPA should be a valid zip");
+
+    let app_path = std::fs::read_dir(unpack_dir.join("Payload"))
+        .expect("IPA should contain Payload/")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|ext| ext == "app"))
+        .expect("Payload/ should contain a .app bundle");
+
     let verify_output = std::process::Command::new("codesign")
         .args(["--verify", "--deep", "--strict"])
-        .arg(&ipa_path)
+        .arg(&app_path)
         .output()
         .expect("failed to run codesign verify");
     assert!(
         verify_output.status.success(),
-        "Flutter IPA should pass code signature verification"
+        "Flutter .app should pass code signature verification: {}",
+        String::from_utf8_lossy(&verify_output.stderr)
     );
 }
