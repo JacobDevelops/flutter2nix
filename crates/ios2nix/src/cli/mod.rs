@@ -5,6 +5,7 @@ pub mod export;
 pub mod generate;
 pub mod lock;
 pub mod sign;
+pub mod sign_setup;
 
 use clap::{Parser, Subcommand};
 
@@ -44,6 +45,9 @@ pub enum Command {
     Archive(archive::ArchiveArgs),
     /// Export an .ipa from an .xcarchive (signing is Plan 3)
     Export(export::ExportArgs),
+    /// Set up signing: create temp keychain, import identity, install profile
+    #[command(name = "sign-setup")]
+    SignSetup(sign_setup::SignSetupArgs),
     /// Sign an existing .ipa
     Sign(sign::SignArgs),
 }

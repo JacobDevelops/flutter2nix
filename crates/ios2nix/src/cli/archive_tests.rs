@@ -30,11 +30,47 @@ fn test_archive_args_unsigned() {
         configuration: "Release".to_string(),
         archive_path: std::path::PathBuf::from("out.xcarchive"),
         signing: None,
+        bundle_id: None,
     };
 
     let args = xcodebuild_args(&cmd);
     assert!(args.contains(&"archive".to_string()));
     assert!(args.contains(&"CODE_SIGNING_ALLOWED=NO".to_string()));
+}
+
+#[test]
+fn test_archive_args_signed() {
+    use crate::export_opts::SigningConfig;
+
+    let cmd = ArchiveCommand {
+        workspace: std::path::PathBuf::from("ios/Runner.xcworkspace"),
+        scheme: "Runner".to_string(),
+        configuration: "Release".to_string(),
+        archive_path: std::path::PathBuf::from("out.xcarchive"),
+        bundle_id: None,
+        signing: Some(SigningConfig {
+            team_id: "TEAM123456".to_string(),
+            identity: "Apple Distribution: Example Corp (TEAM123456)".to_string(),
+            profile_specifier: "My Profile".to_string(),
+            keychain: std::path::PathBuf::from("/path/to/keychain"),
+        }),
+    };
+
+    let args = xcodebuild_args(&cmd);
+    assert!(args.contains(&"archive".to_string()));
+    assert!(args.contains(&"DEVELOPMENT_TEAM=TEAM123456".to_string()));
+    assert!(args.contains(&"CODE_SIGN_STYLE=Manual".to_string()));
+    assert!(args
+        .iter()
+        .any(|a| a.starts_with("CODE_SIGN_IDENTITY=Apple Distribution")));
+    assert!(args
+        .iter()
+        .any(|a| a.starts_with("PROVISIONING_PROFILE_SPECIFIER=My Profile")));
+    assert!(args
+        .iter()
+        .any(|a| a.starts_with("OTHER_CODE_SIGN_FLAGS=--keychain")));
+    // Make sure we don't have CODE_SIGNING_ALLOWED=NO for signed
+    assert!(!args.contains(&"CODE_SIGNING_ALLOWED=NO".to_string()));
 }
 
 #[cfg(target_os = "macos")]
@@ -71,6 +107,7 @@ fn test_archive_create_xcarchive() {
         configuration: "Release".to_string(),
         archive_path: fixture_dst.join("out.xcarchive"),
         signing: None,
+        bundle_id: None,
     };
 
     let result = run(cmd);

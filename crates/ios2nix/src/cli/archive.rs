@@ -19,6 +19,27 @@ pub struct ArchiveArgs {
     /// Output .xcarchive path
     #[arg(long)]
     pub archive_path: PathBuf,
+
+    /// Apple Developer Team ID (for signed archive, also from IOS2NIX_TEAM_ID env)
+    #[arg(long)]
+    pub team_id: Option<String>,
+
+    /// Signing identity name (e.g., "Apple Distribution: Example Corp (TEAM123456)")
+    #[arg(long)]
+    pub signing_identity: Option<String>,
+
+    /// Provisioning profile specifier (profile name or UUID)
+    #[arg(long)]
+    pub profile_specifier: Option<String>,
+
+    /// Path to keychain for signing
+    #[arg(long)]
+    pub keychain: Option<PathBuf>,
+
+    /// Override the product bundle identifier (PRODUCT_BUNDLE_IDENTIFIER),
+    /// e.g. to match a provisioning profile's exact App ID
+    #[arg(long)]
+    pub bundle_id: Option<String>,
 }
 
 pub struct ArchiveCommand {
@@ -27,6 +48,42 @@ pub struct ArchiveCommand {
     pub configuration: String,
     pub archive_path: PathBuf,
     pub signing: Option<SigningConfig>,
+    pub bundle_id: Option<String>,
+}
+
+impl ArchiveCommand {
+    /// Create a new ArchiveCommand from ArchiveArgs, validating signing fields.
+    pub fn from_args(args: &ArchiveArgs) -> anyhow::Result<Self> {
+        // Check if any signing field is present
+        let has_team_id = args.team_id.is_some();
+        let has_identity = args.signing_identity.is_some();
+        let has_profile = args.profile_specifier.is_some();
+        let has_keychain = args.keychain.is_some();
+
+        let signing = if has_team_id || has_identity || has_profile || has_keychain {
+            // If any is present, all must be present
+            if !(has_team_id && has_identity && has_profile && has_keychain) {
+                anyhow::bail!("signing requires all of: --team-id, --signing-identity, --profile-specifier, --keychain");
+            }
+            Some(SigningConfig {
+                team_id: args.team_id.clone().unwrap(),
+                identity: args.signing_identity.clone().unwrap(),
+                profile_specifier: args.profile_specifier.clone().unwrap(),
+                keychain: args.keychain.clone().unwrap(),
+            })
+        } else {
+            None
+        };
+
+        Ok(ArchiveCommand {
+            workspace: args.workspace.clone(),
+            scheme: args.scheme.clone(),
+            configuration: args.configuration.clone(),
+            archive_path: args.archive_path.clone(),
+            signing,
+            bundle_id: args.bundle_id.clone(),
+        })
+    }
 }
 
 fn xcodebuild_args(cmd: &ArchiveCommand) -> Vec<String> {
@@ -42,10 +99,25 @@ fn xcodebuild_args(cmd: &ArchiveCommand) -> Vec<String> {
     args.push("-destination".to_string());
     args.push("generic/platform=iOS".to_string());
 
-    if cmd.signing.is_none() {
+    if let Some(signing) = &cmd.signing {
+        args.push(format!("DEVELOPMENT_TEAM={}", signing.team_id));
+        args.push("CODE_SIGN_STYLE=Manual".to_string());
+        args.push(format!("CODE_SIGN_IDENTITY={}", signing.identity));
+        args.push(format!(
+            "PROVISIONING_PROFILE_SPECIFIER={}",
+            signing.profile_specifier
+        ));
+        args.push(format!(
+            "OTHER_CODE_SIGN_FLAGS=--keychain {}",
+            signing.keychain.to_string_lossy()
+        ));
+    } else {
         args.push("CODE_SIGNING_ALLOWED=NO".to_string());
     }
-    // Plan 3 §5a: signing flags when Some(_s) — unimplemented
+
+    if let Some(bundle_id) = &cmd.bundle_id {
+        args.push(format!("PRODUCT_BUNDLE_IDENTIFIER={}", bundle_id));
+    }
 
     args
 }
@@ -85,12 +157,6 @@ pub fn verify_archive_structure(archive: &Path) -> anyhow::Result<PathBuf> {
 }
 
 pub fn run(cmd: ArchiveCommand) -> anyhow::Result<PathBuf> {
-    // Plan 3 §5a owns the manual-signing flag branch; archiving with signing
-    // silently un-applied would produce a wrongly-signed archive.
-    if cmd.signing.is_some() {
-        anyhow::bail!("manual-signing archive flags are Plan 3 — unimplemented");
-    }
-
     #[cfg(target_os = "macos")]
     {
         let env = crate::xcode::env::setup_xcode_env()?;

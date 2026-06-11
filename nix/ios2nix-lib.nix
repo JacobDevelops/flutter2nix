@@ -53,7 +53,7 @@ let
       ${installCmds}
     '';
 
-  # Full derivation that builds an unsigned iOS app (archive + optional export).
+  # Full derivation that builds an iOS app (archive + optional export, with optional signing).
   # Signing is impure — it depends on Apple network reachability, keychain state,
   # installed provisioning profiles, and embedded timestamps, none of which are
   # content-addressed. Only the pod inputs (fetched by hash) are deterministic;
@@ -68,6 +68,12 @@ let
   #   scheme          — Xcode scheme name (default: "Runner" for Flutter apps)
   #   configuration   — Build configuration (default: "Release")
   #   exportOptions   — Path to ExportOptions.plist for xcodebuild -exportArchive
+  #   signing         — null (unsigned) or an attrset with { teamId, identity, profileSpecifier, ios2nix? }
+  #                      For signed builds, signing material is read from the impure environment at
+  #                      build time (IOS2NIX_P12_PATH, IOS2NIX_P12_PASSWORD, IOS2NIX_PROFILE_PATH,
+  #                      IOS2NIX_KEYCHAIN_PASSWORD), NEVER from the Nix store. The ios2nix bin is
+  #                      invoked to set up the temporary keychain and partition list; the archive and
+  #                      export use manual-signing flags with the keychain path from setup.
   #   ...             — additional mkDerivation attributes
   buildIOSApp =
     { pkgs
@@ -78,13 +84,15 @@ let
     , scheme ? "Runner"
     , configuration ? "Release"
     , exportOptions
+    , signing ? null
     , ...
     }:
     pkgs.stdenv.mkDerivation {
       inherit name src;
       __noChroot = true;
       meta.platforms = lib.platforms.darwin;
-      buildInputs = [ pkgs.cocoapods ];
+      buildInputs = [ pkgs.cocoapods ]
+        ++ lib.optionals (signing != null) [ (signing.ios2nix or pkgs.ios2nix) ];
       buildPhase = ''
         runHook preBuild
         podsSandbox=${buildPodsSandbox pkgs (readPods lockFile)}
@@ -101,26 +109,56 @@ let
 
         ${pkgs.cocoapods}/bin/pod install --no-repo-update
 
+        # If signing is requested, set up the temporary keychain and partition list.
+        # The ios2nix CLI creates a temp keychain, imports the signing cert, sets
+        # set-key-partition-list so codesign works non-interactively, and prints the
+        # keychain path on stdout for use in the archive step.
+        ${lib.optionalString (signing != null) ''
+          IOS2NIX_KEYCHAIN_PATH=$(ios2nix sign-setup \
+            --p12 "$IOS2NIX_P12_PATH" \
+            --profile "$IOS2NIX_PROFILE_PATH")
+          export IOS2NIX_KEYCHAIN_PATH
+          # Ensure cleanup even if archive/export fails.
+          trap '[ -n "''${IOS2NIX_KEYCHAIN_PATH}" ] && security delete-keychain "''${IOS2NIX_KEYCHAIN_PATH}" 2>/dev/null || true' EXIT
+        ''}
+
         # xcodebuild must never see the Nix toolchain env (CC/LD/SDKROOT/
         # DEVELOPER_DIR/NIX_* — spike Finding 4): run it under env -i with the
         # system PATH; /usr/bin/xcodebuild dispatches through xcode-select.
-        env -i HOME="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-          xcodebuild archive \
-          -workspace ${workspace} \
-          -scheme ${scheme} \
-          -configuration ${configuration} \
-          -archivePath "$TMPDIR/app.xcarchive" \
-          -destination 'generic/platform=iOS' \
-          CODE_SIGNING_ALLOWED=NO
+        ${if signing != null then ''
+          env -i HOME="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+            IOS2NIX_KEYCHAIN_PATH="$IOS2NIX_KEYCHAIN_PATH" \
+            xcodebuild archive \
+            -workspace ${workspace} \
+            -scheme ${scheme} \
+            -configuration ${configuration} \
+            -archivePath "$TMPDIR/app.xcarchive" \
+            -destination 'generic/platform=iOS' \
+            DEVELOPMENT_TEAM="${signing.teamId}" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="${signing.identity}" \
+            PROVISIONING_PROFILE_SPECIFIER="${signing.profileSpecifier}" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $IOS2NIX_KEYCHAIN_PATH"
+        '' else ''
+          env -i HOME="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+            xcodebuild archive \
+            -workspace ${workspace} \
+            -scheme ${scheme} \
+            -configuration ${configuration} \
+            -archivePath "$TMPDIR/app.xcarchive" \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO
+        ''}
 
-        # Unsigned export fails upstream ("No Team Found in Archive", spike
-        # Phase -1.5); the archive below is the supported Plan 2 output and
-        # Plan 3's signed plist turns this step functional.
+        # Export the archive with the provided ExportOptions.plist.
+        # For signed builds, the export will perform code signing; failure fails the build.
+        # For unsigned builds, export may fail due to missing team info, so we allow it.
         env -i HOME="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+          ${lib.optionalString (signing != null) ''IOS2NIX_KEYCHAIN_PATH="$IOS2NIX_KEYCHAIN_PATH"''} \
           xcodebuild -exportArchive \
           -archivePath "$TMPDIR/app.xcarchive" \
           -exportOptionsPlist ${exportOptions} \
-          -exportPath "$TMPDIR/export" || true
+          -exportPath "$TMPDIR/export" ${lib.optionalString (signing == null) "|| true"}
 
         runHook postBuild
       '';
@@ -132,7 +170,7 @@ let
           [ -e "$ipa" ] && cp "$ipa" $out/
         done
 
-        # Archive-only fallback until Plan 3 supplies signing for the export.
+        # Archive-only fallback for unsigned builds when export fails.
         if [ -d "$TMPDIR/app.xcarchive" ]; then
           cp -R "$TMPDIR/app.xcarchive" $out/app.xcarchive
         fi

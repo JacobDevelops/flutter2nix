@@ -6,5 +6,6 @@ pub mod export_opts;
 pub mod keychain;
 pub mod lockfile;
 pub mod podspec;
+pub mod provisioning;
 pub mod resolve_cache;
 pub mod xcode;

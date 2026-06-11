@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+	<key>AppIDName</key>
+	<string>Example App</string>
+	<key>ApplicationIdentifierPrefix</key>
+	<array>
+		<string>TEAM123456</string>
+	</array>
+	<key>CreationDate</key>
+	<string>2024-01-15T10:00:00Z</string>
+	<key>ExpirationDate</key>
+	<string>2025-12-31T23:59:59Z</string>
+	<key>Name</key>
+	<string>Example AdHoc Profile</string>
+	<key>TeamIdentifier</key>
+	<array>
+		<string>TEAM123456</string>
+	</array>
+	<key>TeamName</key>
+	<string>Example Team</string>
+	<key>UUID</key>
+	<string>ef3d7190-5839-4429-ad81-c82cf90e444a</string>
+	<key>Entitlements</key>
+	<dict>
+		<key>application-identifier</key>
+		<string>TEAM123456.com.example.app</string>
+		<key>get-task-allow</key>
+		<false/>
+		<key>team-identifier</key>
+		<string>TEAM123456</string>
+		<key>keychain-access-groups</key>
+		<array>
+			<string>TEAM123456.com.example.app</string>
+		</array>
+	</dict>
+	<key>ProvisionedDevices</key>
+	<array>
+		<string>00008101-001A49E21234567E</string>
+	</array>
+	<key>Version</key>
+	<integer>1</integer>
+</dict></plist>

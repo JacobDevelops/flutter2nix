@@ -57,13 +57,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Some(Command::Archive(archive_args)) => {
-            let cmd = cli::archive::ArchiveCommand {
-                workspace: archive_args.workspace,
-                scheme: archive_args.scheme,
-                configuration: archive_args.configuration,
-                archive_path: archive_args.archive_path,
-                signing: None,
-            };
+            let cmd = cli::archive::ArchiveCommand::from_args(&archive_args)?;
             match cli::archive::run(cmd) {
                 Ok(archive_path) => {
                     println!("{}", archive_path.display());
@@ -86,7 +80,37 @@ async fn main() -> anyhow::Result<()> {
                 Err(e) => Err(e),
             }
         }
-        Some(Command::Sign(_)) => cli::sign::run(),
+        Some(Command::SignSetup(sign_setup_args)) => {
+            let resolved = sign_setup_args.resolve();
+            let cmd = cli::sign_setup::SignSetupCommand {
+                p12: resolved.p12.ok_or_else(|| {
+                    anyhow::anyhow!("--p12 or IOS2NIX_P12_PATH environment variable required")
+                })?,
+                profile: resolved.profile.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "--profile or IOS2NIX_PROFILE_PATH environment variable required"
+                    )
+                })?,
+            };
+            match cli::sign_setup::run(cmd) {
+                Ok(keychain_path) => {
+                    // stdout must carry only the keychain path: Nix captures it via $(...)
+                    println!("{}", keychain_path.display());
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
+        Some(Command::Sign(sign_args)) => {
+            let cmd = cli::sign::SignCommand::from_args(&sign_args)?;
+            match cli::sign::run(cmd) {
+                Ok(output_path) => {
+                    println!("{}", output_path.display());
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
         None => {
             println!("ios2nix: use --help for available subcommands");
             Ok(())
