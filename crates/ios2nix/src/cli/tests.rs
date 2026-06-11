@@ -19,7 +19,61 @@ fn test_cli_arg_parsing_lock() {
 #[test]
 fn test_cli_arg_parsing_build() {
     let args = Args::try_parse_from(["ios2nix", "build"]).expect("should parse build command");
-    assert!(matches!(args.command, Some(Command::Build)));
+    match args.command {
+        Some(Command::Build(build_args)) => {
+            assert_eq!(build_args.project_dir, PathBuf::from("."));
+            assert_eq!(build_args.scheme, "Runner");
+            assert_eq!(build_args.configuration, "Release");
+            assert!(build_args.workspace.is_none());
+        }
+        _ => panic!("expected Command::Build"),
+    }
+}
+
+#[test]
+fn test_cli_arg_parsing_archive() {
+    let args = Args::try_parse_from(["ios2nix", "archive", "--archive-path", "/tmp/out.xcarchive"])
+        .expect("should parse archive command");
+    match args.command {
+        Some(Command::Archive(archive_args)) => {
+            assert_eq!(
+                archive_args.archive_path,
+                PathBuf::from("/tmp/out.xcarchive")
+            );
+            assert_eq!(archive_args.scheme, "Runner");
+            assert_eq!(archive_args.configuration, "Release");
+        }
+        _ => panic!("expected Command::Archive"),
+    }
+}
+
+#[test]
+fn test_cli_arg_parsing_export() {
+    let args = Args::try_parse_from([
+        "ios2nix",
+        "export",
+        "--archive-path",
+        "/tmp/out.xcarchive",
+        "--export-opts-plist",
+        "/tmp/ExportOptions.plist",
+        "--output-path",
+        "/tmp/output",
+    ])
+    .expect("should parse export command");
+    match args.command {
+        Some(Command::Export(export_args)) => {
+            assert_eq!(
+                export_args.archive_path,
+                PathBuf::from("/tmp/out.xcarchive")
+            );
+            assert_eq!(
+                export_args.export_opts_plist,
+                PathBuf::from("/tmp/ExportOptions.plist")
+            );
+            assert_eq!(export_args.output_path, PathBuf::from("/tmp/output"));
+        }
+        _ => panic!("expected Command::Export"),
+    }
 }
 
 #[test]

@@ -8,6 +8,18 @@ pub mod sign;
 
 use clap::{Parser, Subcommand};
 
+/// Failure detail for a spawned xcodebuild: last stdout lines + stderr —
+/// xcodebuild reports most build errors on stdout, not stderr.
+pub(crate) fn failure_detail(output: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout_tail: Vec<&str> = {
+        let lines: Vec<&str> = stdout.lines().collect();
+        lines[lines.len().saturating_sub(40)..].to_vec()
+    };
+    format!("{}\n{}", stdout_tail.join("\n"), stderr.trim())
+}
+
 #[derive(Parser)]
 #[command(
     name = "ios2nix",
@@ -27,13 +39,13 @@ pub enum Command {
     /// Generate Nix expressions from lockfile
     Generate(generate::GenerateArgs),
     /// Build the iOS project
-    Build,
+    Build(build::BuildArgs),
     /// Create an .xcarchive
-    Archive,
-    /// Export a signed .ipa from an .xcarchive
-    Export,
+    Archive(archive::ArchiveArgs),
+    /// Export an .ipa from an .xcarchive (signing is Plan 3)
+    Export(export::ExportArgs),
     /// Sign an existing .ipa
-    Sign,
+    Sign(sign::SignArgs),
 }
 
 #[cfg(test)]

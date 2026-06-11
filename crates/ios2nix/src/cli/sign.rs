@@ -1,3 +1,13 @@
+use clap::Parser;
+use std::path::PathBuf;
+
+#[derive(Parser, Debug, Clone)]
+pub struct SignArgs {
+    /// Path to .ipa to sign
+    #[arg(long)]
+    pub ipa_path: PathBuf,
+}
+
 pub fn run() -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
     {

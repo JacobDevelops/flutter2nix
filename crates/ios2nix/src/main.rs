@@ -34,10 +34,59 @@ async fn main() -> anyhow::Result<()> {
             };
             cli::generate::run(cmd)
         }
-        Some(Command::Build) => cli::build::run(),
-        Some(Command::Archive) => cli::archive::run(),
-        Some(Command::Export) => cli::export::run(),
-        Some(Command::Sign) => cli::sign::run(),
+        Some(Command::Build(build_args)) => {
+            let workspace = build_args
+                .workspace
+                .unwrap_or_else(|| build_args.project_dir.join("Runner.xcworkspace"));
+            let cmd = cli::build::BuildCommand {
+                project_dir: build_args.project_dir,
+                workspace,
+                scheme: build_args.scheme,
+                configuration: build_args.configuration,
+                derived_data: build_args.derived_data,
+            };
+            match cli::build::run(cmd) {
+                Ok(output) => {
+                    println!(
+                        "version={} architectures={:?}",
+                        output.version, output.architectures
+                    );
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
+        Some(Command::Archive(archive_args)) => {
+            let cmd = cli::archive::ArchiveCommand {
+                workspace: archive_args.workspace,
+                scheme: archive_args.scheme,
+                configuration: archive_args.configuration,
+                archive_path: archive_args.archive_path,
+                signing: None,
+            };
+            match cli::archive::run(cmd) {
+                Ok(archive_path) => {
+                    println!("{}", archive_path.display());
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
+        Some(Command::Export(export_args)) => {
+            let cmd = cli::export::ExportCommand {
+                archive_path: export_args.archive_path,
+                export_opts_plist: export_args.export_opts_plist,
+                output_path: export_args.output_path,
+            };
+            match cli::export::run(cmd) {
+                Ok(ipa_path) => {
+                    println!("{}", ipa_path.display());
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
+        Some(Command::Sign(_)) => cli::sign::run(),
         None => {
             println!("ios2nix: use --help for available subcommands");
             Ok(())

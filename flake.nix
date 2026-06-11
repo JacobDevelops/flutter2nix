@@ -12,10 +12,11 @@
 
   outputs = { self, nixpkgs, flake-utils, fenix }:
     # lib is top-level (not per-system) so consumers access flake.lib.buildGradleProject directly.
-    # buildIOSApp and buildFlutterApp remain unimplemented until Phase 3/4.
+    # buildFlutterApp remains unimplemented until Phase 4.
     {
-      lib = (import ./nix/gradle2nix-lib.nix { lib = nixpkgs.lib; }) // {
-        buildIOSApp = _: throw "buildIOSApp: not implemented — see Phase 3";
+      lib = (import ./nix/gradle2nix-lib.nix { lib = nixpkgs.lib; })
+        // (import ./nix/ios2nix-lib.nix { lib = nixpkgs.lib; })
+        // {
         buildFlutterApp = _: throw "buildFlutterApp: not implemented — see Phase 4";
       };
     } // flake-utils.lib.eachDefaultSystem (system:
@@ -84,6 +85,16 @@
             cp ${tapi-shim-jar} tapi-shim/build/libs/tapi-shim.jar
           '';
         };
+        ios2nix = rustPlatform.buildRustPackage {
+          pname = "ios2nix";
+          version = "0.1.0";
+          src = ./.;
+          cargoLock.lockFile = ./Cargo.lock;
+          cargoBuildFlags = [ "-p" "ios2nix" ];
+          nativeBuildInputs = sharedNativeBuildInputs;
+          buildInputs = sharedBuildInputs;
+          meta.platforms = pkgs.lib.platforms.darwin;
+        };
         # Init script over the committed fixture lockfile (its file:// URL pulls in
         # the offline Maven repo). Exposed for `fnx bench`, which drives offline
         # Gradle builds outside the Nix sandbox. Same derivations the e2e checks use.
@@ -129,23 +140,40 @@
             lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
           };
         };
-        # Whole-suite aggregate: `nix build .#e2e` realises every entry in e2eTests.
-        # Empty no-op derivation on non-Linux or when the fixture lockfile is absent.
+        # iOS e2e: archive-only per the Phase -1.5 spike (unsigned export is not
+        # feasible — the first functional .ipa is Plan 3's signed e2e). Same
+        # allowed-to-fail tier as the android e2e; dormant until the fixture
+        # iOS lockfile exists.
+        iosE2eTests = pkgs.lib.optionalAttrs (
+          pkgs.stdenv.isDarwin
+          && builtins.pathExists ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock
+        ) {
+          buildIOSApp-e2e = self.lib.buildIOSApp {
+            inherit pkgs;
+            name = "ios-archive-e2e";
+            src = ./tests/fixtures/flutter/minimal-app;
+            lockFile = ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock;
+            exportOptions = ./crates/ios2nix/tests/fixtures/xcode-projects/native-app/ExportOptions.plist;
+          };
+        };
+        # Whole-suite aggregate: `nix build .#e2e` realises every e2e entry.
+        # Empty no-op derivation when the platform/fixture gates are closed.
         e2eAll = pkgs.linkFarm "e2e-all"
-          (pkgs.lib.mapAttrsToList (name: path: { inherit name path; }) e2eTests);
+          (pkgs.lib.mapAttrsToList (name: path: { inherit name path; })
+            (e2eTests // iosE2eTests));
       in
       {
         packages = {
           inherit fnx tapi-shim-jar gradle2nix;
           flutter2nix = flutter2nix-cli;
           bench-init-script = benchGradle.initScript;
-          # iOS orchestration is macOS-only and unreleased (Phase 3).
-          ios2nix = pkgs.emptyDirectory;
           # Whole e2e suite — `nix build .#e2e` (or `fnx check`) runs every e2e test.
           e2e = e2eAll;
           default = self.packages.${system}.flutter2nix;
           # Each e2e test is also exposed individually (e.g. `.#buildFlutterAndroidApp-e2e`).
-        } // e2eTests;
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+          inherit ios2nix;
+        } // e2eTests // iosE2eTests;
 
         # Checks: use buildRustPackage so Cargo.lock deps are vendored (no network in sandbox)
         checks = {
@@ -198,14 +226,7 @@
               name = "eval-test";
               src = ./tests/fixtures/gradle;
               lockFile = ./tests/fixtures/gradle/android-minimal.lock;
-              # Init script over the committed fixture lockfile (its file:// URL pulls in
-        # the offline Maven repo). Exposed for `fnx bench`, which drives offline
-        # Gradle builds outside the Nix sandbox. Same derivations the e2e checks use.
-        benchGradle = self.lib.buildGradleProject {
-          inherit pkgs;
-          lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
-        };
-        androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
+              androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
             };
           in assert drv ? drvPath;
              pkgs.runCommand "buildAndroidApp-eval" { } "touch $out";
@@ -216,14 +237,7 @@
               name = "flutter-android-eval-test";
               src = ./tests/fixtures/flutter/minimal-app;
               lockFile = ./tests/fixtures/flutter/flutter-minimal.lock;
-              # Init script over the committed fixture lockfile (its file:// URL pulls in
-        # the offline Maven repo). Exposed for `fnx bench`, which drives offline
-        # Gradle builds outside the Nix sandbox. Same derivations the e2e checks use.
-        benchGradle = self.lib.buildGradleProject {
-          inherit pkgs;
-          lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
-        };
-        androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
+              androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
             };
           in assert drv ? drvPath;
              pkgs.runCommand "buildFlutterAndroidApp-eval" { } "touch $out";
@@ -241,7 +255,39 @@
               grep -q 'file://${gradle.mavenRepo}' ${gradle.initScript}
               touch $out
             '';
+          # Pre-mortem #5 (Nix half): the git+url#rev packing must round-trip
+          # into exact fetchgit args. Pure eval — runs on all systems.
+          ios2nix-split-git-url-eval = let
+            result = self.lib.splitGitUrl
+              "git+https://github.com/jdg/MBProgressHUD.git#bca42b801100b2b3a4eda0ba8dd33d858c780b0d";
+          in
+          assert result.url == "https://github.com/jdg/MBProgressHUD.git";
+          assert result.rev == "bca42b801100b2b3a4eda0ba8dd33d858c780b0d";
+          pkgs.runCommand "ios2nix-split-git-url-eval" { } "touch $out";
           default = pkgs.runCommand "flake-check-ok" { } "echo ok > $out";
+        # iOS checks are darwin-gated; ios-pods-sandbox-test realises a real
+        # fixed-output git fetch (analogue of android-maven-repo-test).
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+          ios-pods-sandbox-test = let
+            sandbox = self.lib.buildPodsSandbox pkgs (self.lib.readPods ./tests/fixtures/ios/minimal-pods.lock);
+          in
+          pkgs.runCommand "ios-pods-sandbox-test" { } ''
+            test -f ${sandbox}/pods/MBProgressHUD/1.2.0/MBProgressHUD.h
+            touch $out
+          '';
+          # Forces full instantiation (drvPath), not just attribute presence —
+          # `drv ? drvPath` is lazy and lets broken buildPhase interpolations
+          # (e.g. a nonexistent package reference) slip through evaluation.
+          buildIOSApp-eval = let
+            drv = self.lib.buildIOSApp {
+              inherit pkgs;
+              name = "eval-test";
+              src = ./crates/ios2nix/tests/fixtures/xcode-projects/native-app;
+              lockFile = ./tests/fixtures/ios/minimal-pods.lock;
+              exportOptions = ./crates/ios2nix/tests/fixtures/xcode-projects/native-app/ExportOptions.plist;
+            };
+          in builtins.seq drv.drvPath
+             (pkgs.runCommand "buildIOSApp-eval" { } "touch $out");
         };
       }
     );
