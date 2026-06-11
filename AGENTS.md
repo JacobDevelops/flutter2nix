@@ -79,7 +79,7 @@ cargo test --workspace                  # unit + integration tests
 nix flake check                         # Nix eval + structural checks
 nix build .#gradle2nix                  # build a specific package
 fnx check / fnx build / fnx test / fnx fmt   # convenience wrappers
-fnx bench [--target lock|gradle-build|flutter-build]   # cold+warm wall-clock benchmarks (run in nix develop)
+fnx bench [--target lock|gradle-build|flutter-build|ios-lock|ios-build]   # cold+warm wall-clock benchmarks (run in nix develop; ios-build needs .ios2nix-signing.env)
 ```
 
 CI runs `cargo check`, `cargo clippy`, and `nix flake check` as required gates. E2E tests are currently allowed to fail.

@@ -40,6 +40,10 @@ pub struct ArchiveArgs {
     /// e.g. to match a provisioning profile's exact App ID
     #[arg(long)]
     pub bundle_id: Option<String>,
+
+    /// DerivedData path (xcodebuild -derivedDataPath); reuse across runs for warm builds
+    #[arg(long)]
+    pub derived_data: Option<PathBuf>,
 }
 
 pub struct ArchiveCommand {
@@ -49,6 +53,7 @@ pub struct ArchiveCommand {
     pub archive_path: PathBuf,
     pub signing: Option<SigningConfig>,
     pub bundle_id: Option<String>,
+    pub derived_data: Option<PathBuf>,
 }
 
 impl ArchiveCommand {
@@ -82,6 +87,7 @@ impl ArchiveCommand {
             archive_path: args.archive_path.clone(),
             signing,
             bundle_id: args.bundle_id.clone(),
+            derived_data: args.derived_data.clone(),
         })
     }
 }
@@ -98,6 +104,11 @@ fn xcodebuild_args(cmd: &ArchiveCommand) -> Vec<String> {
     args.push(cmd.archive_path.to_string_lossy().to_string());
     args.push("-destination".to_string());
     args.push("generic/platform=iOS".to_string());
+
+    if let Some(derived_data) = &cmd.derived_data {
+        args.push("-derivedDataPath".to_string());
+        args.push(derived_data.to_string_lossy().to_string());
+    }
 
     if let Some(signing) = &cmd.signing {
         args.push(format!("DEVELOPMENT_TEAM={}", signing.team_id));

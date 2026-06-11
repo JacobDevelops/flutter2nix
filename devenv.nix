@@ -42,6 +42,8 @@ in
     gradle_8
     androidSdk
     jujutsu
+    # ios2nix lock hashes git-source pods via nix-prefetch-git
+    nix-prefetch-git
   ];
 
   env = {

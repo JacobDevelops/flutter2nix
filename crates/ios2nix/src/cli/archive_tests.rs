@@ -31,6 +31,7 @@ fn test_archive_args_unsigned() {
         archive_path: std::path::PathBuf::from("out.xcarchive"),
         signing: None,
         bundle_id: None,
+        derived_data: None,
     };
 
     let args = xcodebuild_args(&cmd);
@@ -48,6 +49,7 @@ fn test_archive_args_signed() {
         configuration: "Release".to_string(),
         archive_path: std::path::PathBuf::from("out.xcarchive"),
         bundle_id: None,
+        derived_data: None,
         signing: Some(SigningConfig {
             team_id: "TEAM123456".to_string(),
             identity: "Apple Distribution: Example Corp (TEAM123456)".to_string(),
@@ -108,6 +110,7 @@ fn test_archive_create_xcarchive() {
         archive_path: fixture_dst.join("out.xcarchive"),
         signing: None,
         bundle_id: None,
+        derived_data: None,
     };
 
     let result = run(cmd);

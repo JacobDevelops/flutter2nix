@@ -17,7 +17,7 @@ use crate::nixutil;
 /// the run holding cache directories open.
 #[derive(Args)]
 pub struct BenchArgs {
-    /// Benchmark target: lock | gradle-build | flutter-build | all
+    /// Benchmark target: lock | gradle-build | flutter-build | ios-lock | ios-build | all
     #[arg(long, default_value = "all")]
     pub target: String,
 }
@@ -43,11 +43,33 @@ pub fn run(args: BenchArgs) -> anyhow::Result<()> {
     if want("flutter-build") {
         results.push(bench_flutter_build(&repo_root)?);
     }
-    if results.is_empty() {
+    if want("ios-lock") {
+        results.push(bench_ios_lock(&repo_root)?);
+    }
+    if want("ios-build") {
+        // Needs real signing material — gated like the signing e2e: skipped
+        // under `all` when the local env file is absent, hard error when
+        // requested explicitly.
+        match bench_ios_build(&repo_root)? {
+            Some(r) => results.push(r),
+            None if args.target == "all" => eprintln!(
+                "fnx bench: ios-build skipped ({} not present or not macOS)",
+                super::signing_e2e::SIGNING_ENV_FILE
+            ),
+            None => bail!(
+                "ios-build needs signing material: create {} (see docs/ios-testing.md) on macOS",
+                super::signing_e2e::SIGNING_ENV_FILE
+            ),
+        }
+    }
+    if results.is_empty() && args.target != "all" {
         bail!(
-            "unknown bench target '{}' (expected lock | gradle-build | flutter-build | all)",
+            "unknown bench target '{}' (expected lock | gradle-build | flutter-build | ios-lock | ios-build | all)",
             args.target
         );
+    }
+    if results.is_empty() {
+        bail!("no benchmark ran — every target was skipped");
     }
 
     println!();
@@ -61,7 +83,7 @@ pub fn run(args: BenchArgs) -> anyhow::Result<()> {
         );
     }
     println!();
-    println!("warm = CI-with-cache scenario (Gradle user home retained, build outputs wiped)");
+    println!("warm = CI-with-cache scenario (caches retained — Gradle home / resolve cache / DerivedData — build outputs wiped)");
 
     let report = write_reports(&repo_root, &results)?;
     println!("recorded: {} (+ history.jsonl)", report.display());
@@ -175,16 +197,7 @@ fn command_line(repo_root: &Path, program: &str, args: &[&str]) -> anyhow::Resul
 /// benchmark. Cold downloads the Gradle distribution and resolves every artifact;
 /// warm reuses the temp Gradle home.
 fn bench_lock(repo_root: &Path) -> anyhow::Result<BenchResult> {
-    // Build the binary untimed so compilation never pollutes the measurement.
-    let status = Command::new("cargo")
-        .args(["build", "--release", "-p", "gradle2nix"])
-        .current_dir(repo_root)
-        .status()
-        .context("running cargo build")?;
-    if !status.success() {
-        bail!("cargo build --release -p gradle2nix failed");
-    }
-    let bin = repo_root.join("target/release/gradle2nix");
+    let bin = build_release_bin(repo_root, "gradle2nix")?;
 
     let gradle_home = tempfile::tempdir().context("creating temp gradle home")?;
     let out_dir = tempfile::tempdir().context("creating temp output dir")?;
@@ -310,6 +323,257 @@ fn bench_flutter_build(repo_root: &Path) -> anyhow::Result<BenchResult> {
         cold,
         warm,
     })
+}
+
+/// `ios2nix lock` against the real-pods Podfile.lock fixture — CocoaPods
+/// resolution + source hashing. Cold fetches every podspec from the CDN and
+/// hashes every pod source (nix-prefetch-git); warm reuses the resolve cache.
+fn bench_ios_lock(repo_root: &Path) -> anyhow::Result<BenchResult> {
+    require_on_path("nix-prefetch-git")?;
+    let bin = build_release_bin(repo_root, "ios2nix")?;
+
+    let ios_dir = tempfile::tempdir().context("creating temp ios dir")?;
+    std::fs::copy(
+        repo_root.join("tests/fixtures/ios/bench-podfile/Podfile.lock"),
+        ios_dir.path().join("Podfile.lock"),
+    )
+    .context("copying bench Podfile.lock fixture")?;
+    let cache_dir = tempfile::tempdir().context("creating temp cache dir")?;
+
+    let run_lock = |label: &str| {
+        let mut cmd = Command::new(&bin);
+        cmd.arg("lock")
+            .arg("--ios-dir")
+            .arg(ios_dir.path())
+            .arg("--output")
+            .arg(ios_dir.path().join("ios2nix.lock"))
+            .arg("--cache-dir")
+            .arg(cache_dir.path())
+            .args(["--timeout-secs", "600"]);
+        run_timed(cmd, label)
+    };
+
+    let cold = run_lock("ios-lock (cold)")?;
+    let warm = run_lock("ios-lock (warm)")?;
+    Ok(BenchResult {
+        name: "ios-lock",
+        cold,
+        warm,
+    })
+}
+
+/// Signed `ios2nix archive` + `ios2nix export` of the native Xcode fixture —
+/// the time-to-signed-.ipa benchmark. Cold uses a fresh DerivedData dir; warm
+/// retains it with the archive/export outputs wiped. Gated on the local
+/// signing env file (see signing_e2e); returns Ok(None) when the gate is
+/// closed so `--target all` can skip instead of fail.
+fn bench_ios_build(repo_root: &Path) -> anyhow::Result<Option<BenchResult>> {
+    let Some(vars) = super::signing_e2e::load_signing_vars(repo_root)? else {
+        return Ok(None);
+    };
+    require_on_path("xcodebuild")?;
+    let bin = build_release_bin(repo_root, "ios2nix")?;
+
+    // Temp keychain + identity import + profile install; stdout is the
+    // keychain path. Untimed — the benchmark measures the build, not the
+    // one-off signing setup.
+    let setup_out = {
+        let mut cmd = Command::new(&bin);
+        cmd.arg("sign-setup").current_dir(repo_root);
+        for (key, value) in &vars {
+            cmd.env(key, value);
+        }
+        cmd.output().context("running ios2nix sign-setup")?
+    };
+    if !setup_out.status.success() {
+        bail!(
+            "ios2nix sign-setup failed:\n{}",
+            String::from_utf8_lossy(&setup_out.stderr)
+        );
+    }
+    let keychain = PathBuf::from(String::from_utf8(setup_out.stdout)?.trim());
+    let _keychain_guard = KeychainGuard(keychain.clone());
+
+    let team_id = vars["IOS2NIX_TEAM_ID"].clone();
+    let identity = vars["IOS2NIX_SIGNING_IDENTITY"].clone();
+    let method = vars
+        .get("IOS2NIX_EXPORT_METHOD")
+        .cloned()
+        .unwrap_or_else(|| "ad-hoc".to_string());
+    let profile = profile_metadata(Path::new(&vars["IOS2NIX_PROFILE_PATH"]))?;
+
+    let (_tmp, project) =
+        copy_fixture(&repo_root.join("crates/ios2nix/tests/fixtures/xcode-projects/native-app"))?;
+    let derived_data = tempfile::tempdir().context("creating temp DerivedData dir")?;
+    let export_opts = project.join("BenchExportOptions.plist");
+    write_export_options_plist(&export_opts, &method, &team_id, &identity, &profile)?;
+
+    let archive_path = project.join("out.xcarchive");
+    let ipa_dir = project.join("ipa");
+
+    let pass = |phase: &str| -> anyhow::Result<Duration> {
+        let mut archive = Command::new(&bin);
+        archive
+            .arg("archive")
+            .arg("--workspace")
+            .arg(project.join("ExportTest.xcodeproj/project.xcworkspace"))
+            .args(["--scheme", "ExportTest"])
+            .arg("--archive-path")
+            .arg(&archive_path)
+            .args(["--team-id", &team_id])
+            .args(["--signing-identity", &identity])
+            .args(["--profile-specifier", &profile.name])
+            .arg("--keychain")
+            .arg(&keychain)
+            .args(["--bundle-id", &profile.bundle_id])
+            .arg("--derived-data")
+            .arg(derived_data.path());
+        let archive_time = run_timed(archive, &format!("ios-build archive ({phase})"))?;
+
+        let mut export = Command::new(&bin);
+        export
+            .arg("export")
+            .arg("--archive-path")
+            .arg(&archive_path)
+            .arg("--export-opts-plist")
+            .arg(&export_opts)
+            .arg("--output-path")
+            .arg(&ipa_dir);
+        let export_time = run_timed(export, &format!("ios-build export ({phase})"))?;
+
+        Ok(archive_time + export_time)
+    };
+
+    let cold = pass("cold")?;
+    // CI-warm semantics: retain DerivedData, wipe what the pass produced.
+    for output in [&archive_path, &ipa_dir] {
+        if output.exists() {
+            std::fs::remove_dir_all(output)
+                .with_context(|| format!("removing {}", output.display()))?;
+        }
+    }
+    let warm = pass("warm")?;
+
+    Ok(Some(BenchResult {
+        name: "ios-build",
+        cold,
+        warm,
+    }))
+}
+
+/// Deletes the sign-setup temp keychain (which also drops its search-list
+/// entry) when the benchmark finishes, including on failure.
+struct KeychainGuard(PathBuf);
+
+impl Drop for KeychainGuard {
+    fn drop(&mut self) {
+        let _ = Command::new("security")
+            .arg("delete-keychain")
+            .arg(&self.0)
+            .output();
+    }
+}
+
+struct ProfileMetadata {
+    uuid: String,
+    name: String,
+    bundle_id: String,
+}
+
+/// Decode the CMS-signed profile and read the fields the signed build needs.
+/// Shell-based (security + PlistBuddy) — fnx stays dependency-free.
+fn profile_metadata(profile: &Path) -> anyhow::Result<ProfileMetadata> {
+    let decoded = tempfile::NamedTempFile::new().context("creating temp plist")?;
+    let status = Command::new("security")
+        .args(["cms", "-D", "-i"])
+        .arg(profile)
+        .arg("-o")
+        .arg(decoded.path())
+        .status()
+        .context("running security cms -D")?;
+    if !status.success() {
+        bail!("security cms -D failed on {}", profile.display());
+    }
+
+    let read = |key: &str| -> anyhow::Result<String> {
+        let out = Command::new("/usr/libexec/PlistBuddy")
+            .arg("-c")
+            .arg(format!("Print :{key}"))
+            .arg(decoded.path())
+            .output()
+            .context("running PlistBuddy")?;
+        if !out.status.success() {
+            bail!("PlistBuddy failed reading :{key} from decoded profile");
+        }
+        Ok(String::from_utf8(out.stdout)?.trim().to_string())
+    };
+
+    let uuid = read("UUID")?;
+    let name = read("Name")?;
+    let app_id = read("Entitlements:application-identifier")?;
+    let bundle_id = app_id
+        .split_once('.')
+        .map(|(_, bundle)| bundle.to_string())
+        .context("application-identifier missing TEAMID. prefix")?;
+
+    Ok(ProfileMetadata {
+        uuid,
+        name,
+        bundle_id,
+    })
+}
+
+/// Manual-signing ExportOptions.plist. Fixed shape, hand-rolled like the
+/// JSON in write_reports — keeps fnx dependency-free.
+fn write_export_options_plist(
+    path: &Path,
+    method: &str,
+    team_id: &str,
+    identity: &str,
+    profile: &ProfileMetadata,
+) -> anyhow::Result<()> {
+    let esc = |s: &str| {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    };
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>method</key><string>{}</string>
+  <key>teamID</key><string>{}</string>
+  <key>signingStyle</key><string>manual</string>
+  <key>signingCertificate</key><string>{}</string>
+  <key>provisioningProfiles</key><dict>
+    <key>{}</key><string>{}</string>
+  </dict>
+  <key>destination</key><string>export</string>
+  <key>stripSwiftSymbols</key><true/>
+  <key>compileBitcode</key><false/>
+</dict></plist>
+"#,
+        esc(method),
+        esc(team_id),
+        esc(identity),
+        esc(&profile.bundle_id),
+        esc(&profile.uuid),
+    );
+    std::fs::write(path, plist).with_context(|| format!("writing {}", path.display()))
+}
+
+/// Build a workspace binary in release mode, untimed (compilation must never
+/// pollute a measurement), and return its path.
+fn build_release_bin(repo_root: &Path, package: &str) -> anyhow::Result<PathBuf> {
+    let status = Command::new("cargo")
+        .args(["build", "--release", "-p", package])
+        .current_dir(repo_root)
+        .status()
+        .context("running cargo build")?;
+    if !status.success() {
+        bail!("cargo build --release -p {package} failed");
+    }
+    Ok(repo_root.join("target/release").join(package))
 }
 
 fn run_timed(mut cmd: Command, label: &str) -> anyhow::Result<Duration> {

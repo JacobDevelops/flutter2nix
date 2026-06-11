@@ -2,3 +2,5 @@
 {"timestamp":"2026-06-10T19:53:46+1000","commit":"c28540126a05","host":"Jacob-PC x86_64","results":[{"target":"gradle-build","cold_secs":21.4,"warm_secs":5.8}]}
 {"timestamp":"2026-06-10T22:52:00+1000","commit":"5903aa3f3f20","host":"Jacob-PC x86_64","results":[{"target":"lock","cold_secs":153.3,"warm_secs":10.9}]}
 {"timestamp":"2026-06-10T23:38:10+1000","commit":"b6e92a760db7","host":"Jacob-PC x86_64","results":[{"target":"lock","cold_secs":164.4,"warm_secs":9.9}]}
+{"timestamp":"2026-06-11T20:19:22+1000","commit":"95d6b771a479","host":"Jacobs-MacBook-Pro.local arm64","results":[{"target":"ios-lock","cold_secs":3.4,"warm_secs":0.1}]}
+{"timestamp":"2026-06-11T20:19:58+1000","commit":"688ff1b067d9","host":"Jacobs-MacBook-Pro.local arm64","results":[{"target":"ios-build","cold_secs":19.2,"warm_secs":13.9}]}

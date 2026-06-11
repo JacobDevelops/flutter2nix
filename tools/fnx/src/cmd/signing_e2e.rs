@@ -19,18 +19,15 @@ const REQUIRED_KEYS: [&str; 5] = [
     "IOS2NIX_SIGNING_IDENTITY",
 ];
 
-/// Run the `#[ignore]`-gated iOS signing integration tests when signing
-/// material is configured; skip with a note otherwise. CI never reaches this:
-/// fnx is local-dev only and CI's `cargo test` does not run ignored tests.
-pub fn run_if_configured(repo_root: &Path) -> anyhow::Result<()> {
+/// Load the IOS2NIX_* signing vars from the local env file, ready to inject
+/// into a child process: password file resolved, required keys validated, and
+/// a fresh throwaway keychain password generated when not supplied. Returns
+/// `None` (no error) when the file is absent or the host is not macOS — the
+/// "gate closed" case callers report as a skip.
+pub fn load_signing_vars(repo_root: &Path) -> anyhow::Result<Option<BTreeMap<String, String>>> {
     let env_file = repo_root.join(SIGNING_ENV_FILE);
-    if !env_file.exists() {
-        eprintln!("fnx check: iOS signing e2e skipped ({SIGNING_ENV_FILE} not present)");
-        return Ok(());
-    }
-    if !cfg!(target_os = "macos") {
-        eprintln!("fnx check: iOS signing e2e skipped (requires macOS)");
-        return Ok(());
+    if !env_file.exists() || !cfg!(target_os = "macos") {
+        return Ok(None);
     }
 
     let mut vars = parse_env_file(&env_file)?;
@@ -46,9 +43,23 @@ pub fn run_if_configured(repo_root: &Path) -> anyhow::Result<()> {
 
     validate_required(&vars, &env_file)?;
 
-    // Throwaway password for the temp keychain the tests create (and delete).
+    // Throwaway password for the temp keychain the consumer creates (and deletes).
     vars.entry("IOS2NIX_KEYCHAIN_PASSWORD".to_string())
         .or_insert(random_password()?);
+
+    Ok(Some(vars))
+}
+
+/// Run the `#[ignore]`-gated iOS signing integration tests when signing
+/// material is configured; skip with a note otherwise. CI never reaches this:
+/// fnx is local-dev only and CI's `cargo test` does not run ignored tests.
+pub fn run_if_configured(repo_root: &Path) -> anyhow::Result<()> {
+    let Some(vars) = load_signing_vars(repo_root)? else {
+        eprintln!(
+            "fnx check: iOS signing e2e skipped ({SIGNING_ENV_FILE} not present or not macOS)"
+        );
+        return Ok(());
+    };
 
     eprintln!(
         "fnx check: running iOS signing e2e (cargo test -p ios2nix --test cli_tests -- --ignored)..."

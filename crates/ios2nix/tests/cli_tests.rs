@@ -92,6 +92,7 @@ fn test_cli_archive_from_build() {
         archive_path: fixture_dst.join("out.xcarchive"),
         signing: None,
         bundle_id: None,
+        derived_data: None,
     };
 
     let result = ios2nix::cli::archive::run(cmd);
@@ -174,6 +175,7 @@ fn signed_archive_command(
         // The fixture's own bundle ID won't match the supplied profile's App ID;
         // override it so any exact-match profile works.
         bundle_id: Some(signing.profile.bundle_id.clone()),
+        derived_data: None,
     }
 }
 
