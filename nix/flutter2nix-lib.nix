@@ -282,7 +282,7 @@ let
         inherit pkgs name src lockFile androidSdk;
         jdk = args.jdk or pkgs.jdk17;
         gradlePackage = args.gradlePackage or pkgs.gradle;
-        gradleFlags = args.gradleFlags or [];
+        flutterBuildArgs = args.flutterBuildArgs or [];
       });
 
       iosDrv = buildFlutterIOSApp (passThrough // {

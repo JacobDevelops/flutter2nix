@@ -307,7 +307,7 @@ in
   #   gradlePackage   — Gradle package; MUST match the wrapper version the lockfile
   #                     was captured with (default: pkgs.gradle)
   #   androidSdk      — Android SDK from androidenv.composeAndroidPackages { }.androidsdk
-  #   gradleFlags     — reserved for future use; extra Gradle flags (not passed to flutter CLI)
+  #   flutterBuildArgs — extra args for `flutter build appbundle` (e.g. ["--flavor" "stag"])
   buildFlutterAndroidApp =
     { pkgs
     , name
@@ -319,7 +319,7 @@ in
     , jdk ? pkgs.jdk17
     , gradlePackage ? pkgs.gradle
     , androidSdk
-    , gradleFlags ? []
+    , flutterBuildArgs ? []
     , ...
     }:
     let
@@ -425,17 +425,19 @@ GRADLEW_EOF
         # --no-configuration-cache, --init-script) that flutter build does NOT accept.
         # The init script is auto-loaded from $GRADLE_USER_HOME/init.d/. --no-pub skips
         # pub get since PUB_CACHE is already populated.
-        flutter build appbundle --no-pub
+        flutter build appbundle --no-pub ${lib.escapeShellArgs flutterBuildArgs}
         runHook postBuild
       '';
       installPhase = ''
         runHook preInstall
         mkdir -p $out
-        find . -name "*.aab" -path "*/release/*" -exec cp {} $out/ \;
-        find . -name "*.apk" -path "*/release/*" -exec cp {} $out/ \;
+        # -iname *release*: flavored builds land in bundle/<flavor>Release/
+        # (e.g. stagRelease), not bundle/release/.
+        find . -name "*.aab" -ipath "*release*" -exec cp {} $out/ \;
+        find . -name "*.apk" -ipath "*release*" -exec cp {} $out/ \;
         if [ -z "$(find "$out" -name "*.aab" -o -name "*.apk" 2>/dev/null)" ]; then
           echo "ERROR: No AAB or APK found in build output." >&2
-          echo "  Expected artifacts under: build/app/outputs/bundle/release/" >&2
+          echo "  Expected artifacts under: build/app/outputs/bundle/<variant>Release/" >&2
           exit 1
         fi
         runHook postInstall
