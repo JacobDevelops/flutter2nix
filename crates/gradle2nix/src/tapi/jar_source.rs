@@ -17,7 +17,7 @@ pub fn select_tapi_shim_source() -> anyhow::Result<TapiShimSource> {
         return Ok(TapiShimSource::EnvPath(path));
     }
     Ok(TapiShimSource::Embedded(include_bytes!(
-        "../../../../tapi-shim/build/libs/tapi-shim.jar"
+        "../../tapi-shim/build/libs/tapi-shim.jar"
     )))
 }
 

@@ -19,13 +19,13 @@ fn newest_mtime(dir: &Path) -> Option<SystemTime> {
 }
 
 fn main() {
-    let jar_path = Path::new("../../tapi-shim/build/libs/tapi-shim.jar");
-    let shim_src = Path::new("../../tapi-shim/src");
+    let jar_path = Path::new("./tapi-shim/build/libs/tapi-shim.jar");
+    let shim_src = Path::new("./tapi-shim/src");
 
     if !jar_path.exists() {
         panic!(
             "tapi-shim JAR not found at {}\n\
-             Run: cd tapi-shim && gradle build\n\
+             Run: cd crates/gradle2nix/tapi-shim && gradle build\n\
              This must be done before `cargo build -p gradle2nix`.",
             jar_path.display()
         );
@@ -48,7 +48,7 @@ fn main() {
     }
 
     // Re-run if the JAR changes, or if shim sources change (to re-check staleness)
-    println!("cargo:rerun-if-changed=../../tapi-shim/build/libs/tapi-shim.jar");
-    println!("cargo:rerun-if-changed=../../tapi-shim/src");
+    println!("cargo:rerun-if-changed=./tapi-shim/build/libs/tapi-shim.jar");
+    println!("cargo:rerun-if-changed=./tapi-shim/src");
     println!("cargo:rerun-if-changed=build.rs");
 }

@@ -395,32 +395,13 @@ GRADLEW_EOF
         # each package's pubspec + pubspec.lock.
         rm -f .flutter-plugins-dependencies
         ${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3 \
-          ${./generate-flutter-plugins.py} "$(cat ${flutterSdk}/version)"
+          ${./generate-flutter-plugins.py} "${flutterSdk.version}"
         # flutter build --no-pub never regenerates GeneratedPluginRegistrant.java for
         # release mode, so a debug-style registrant still references dev-dependency
         # plugins (e.g. integration_test) that the Flutter Gradle plugin excludes from
         # release variants — javac then fails with "package does not exist". Strip
         # dev-dependency registrations, mirroring flutter's own release-mode regen.
-        if [ -f .flutter-plugins-dependencies ]; then
-          ${pkgs.python3}/bin/python3 - <<'STRIP_DEV_DEPS_EOF'
-        import json, re
-        deps = json.load(open(".flutter-plugins-dependencies"))
-        dev = [p["name"] for p in deps.get("plugins", {}).get("android", []) if p.get("dev_dependency")]
-        reg = "android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java"
-        try:
-            src = open(reg).read()
-        except FileNotFoundError:
-            dev, src = [], ""
-        for name in dev:
-            src = re.sub(
-                r"    try \{\n[^\n]*\n    \} catch \(Exception e\) \{\n[^\n]*Error registering plugin "
-                + re.escape(name) + r",[^\n]*\n    \}\n",
-                "", src)
-        if src:
-            open(reg, "w").write(src)
-            print(f"flutter2nix: stripped dev-dependency plugins from registrant: {dev}")
-        STRIP_DEV_DEPS_EOF
-        fi
+        ${pkgs.python3}/bin/python3 ${./strip-dev-deps.py}
         # NOTE: gradle.baseGradleFlags contains Gradle-specific flags (--no-daemon,
         # --no-configuration-cache, --init-script) that flutter build does NOT accept.
         # The init script is auto-loaded from $GRADLE_USER_HOME/init.d/. --no-pub skips

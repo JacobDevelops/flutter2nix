@@ -26,11 +26,11 @@ flutter2nix/
 ├── crates/
 │   ├── nix-core/       # Shared dep model + Nix expression codegen (library)
 │   ├── gradle2nix/     # Gradle/Maven → Nix lockfile (binary + library)
+│   │   └── tapi-shim/  # Kotlin/Gradle Tooling API shim (JAR) — gradle2nix only
 │   ├── ios2nix/        # iOS/Xcode orchestration for Nix (binary)
 │   └── flutter2nix/    # Unified cross-platform integration layer (binary)
 ├── tools/
 │   └── fnx/            # Developer CLI (cargo check/test/fmt shortcuts)
-├── tapi-shim/          # Kotlin/Gradle subproject — Gradle Tooling API shim (JAR)
 ├── nix/                # Nix library functions (buildAndroidApp, buildGradleProject, etc.)
 ├── tests/fixtures/     # Integration test fixtures (flutter, gradle)
 ├── docs/               # Guides (gradle2nix-standalone.md, ios-testing.md)

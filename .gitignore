@@ -23,13 +23,13 @@ result-*
 # Gradle
 # Stray plugin-marker extraction junk left by Gradle runs at the repo root.
 /META-INF/
-tapi-shim/.gradle/
+crates/gradle2nix/tapi-shim/.gradle/
 # Use ** (not trailing /) so the negation below can un-ignore the pre-built JAR.
 # Git cannot negate a file inside an ignored directory, but can inside an ignored glob.
-tapi-shim/build/**
+crates/gradle2nix/tapi-shim/build/**
 # The pre-built JAR is vendored so Nix can reference it as a fixed-output path input.
-!tapi-shim/build/libs/
-!tapi-shim/build/libs/tapi-shim.jar
+!crates/gradle2nix/tapi-shim/build/libs/
+!crates/gradle2nix/tapi-shim/build/libs/tapi-shim.jar
 **/fixtures/**/.gradle
 
 # CocoaPods state in iOS fixtures — pod install regenerates it from the

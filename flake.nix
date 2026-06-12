@@ -46,12 +46,12 @@
         };
 
         # Pre-built tapi-shim JAR copied from source tree and hash-locked for reproducibility.
-        # To update: cd tapi-shim && gradle build && nix hash file tapi-shim/build/libs/tapi-shim.jar
+        # To update: cd crates/gradle2nix/tapi-shim && gradle build && nix hash file crates/gradle2nix/tapi-shim/build/libs/tapi-shim.jar
         tapi-shim-jar = pkgs.runCommand "tapi-shim-jar" {
           outputHash = "sha256-YmU5pJGhoskAlyEJn/SpFksjP670fCbucdNdynPLAm4=";
           outputHashMode = "flat";
         } ''
-          cp ${./tapi-shim/build/libs/tapi-shim.jar} $out
+          cp ${./crates/gradle2nix/tapi-shim/build/libs/tapi-shim.jar} $out
         '';
 
         gradle2nix = rustPlatform.buildRustPackage {
@@ -65,8 +65,8 @@
           buildInputs = sharedBuildInputs;
           # Place the JAR where include_bytes! expects it before cargo build runs.
           preBuild = ''
-            mkdir -p tapi-shim/build/libs
-            cp ${tapi-shim-jar} tapi-shim/build/libs/tapi-shim.jar
+            mkdir -p crates/gradle2nix/tapi-shim/build/libs
+            cp ${tapi-shim-jar} crates/gradle2nix/tapi-shim/build/libs/tapi-shim.jar
           '';
         };
         flutter2nix-cli = rustPlatform.buildRustPackage {
@@ -80,8 +80,8 @@
           buildInputs = sharedBuildInputs;
           # flutter2nix links the gradle2nix lib, which embeds the TAPI shim JAR.
           preBuild = ''
-            mkdir -p tapi-shim/build/libs
-            cp ${tapi-shim-jar} tapi-shim/build/libs/tapi-shim.jar
+            mkdir -p crates/gradle2nix/tapi-shim/build/libs
+            cp ${tapi-shim-jar} crates/gradle2nix/tapi-shim/build/libs/tapi-shim.jar
           '';
         };
         ios2nix = rustPlatform.buildRustPackage {
@@ -198,8 +198,8 @@
             nativeBuildInputs = sharedNativeBuildInputs;
             buildInputs = sharedBuildInputs;
             preBuild = ''
-              mkdir -p tapi-shim/build/libs
-              cp ${tapi-shim-jar} tapi-shim/build/libs/tapi-shim.jar
+              mkdir -p crates/gradle2nix/tapi-shim/build/libs
+              cp ${tapi-shim-jar} crates/gradle2nix/tapi-shim/build/libs/tapi-shim.jar
             '';
             buildPhase = "cargo check --workspace --all-targets";
             installPhase = "mkdir -p $out";
@@ -213,8 +213,8 @@
             nativeBuildInputs = sharedNativeBuildInputs;
             buildInputs = sharedBuildInputs;
             preBuild = ''
-              mkdir -p tapi-shim/build/libs
-              cp ${tapi-shim-jar} tapi-shim/build/libs/tapi-shim.jar
+              mkdir -p crates/gradle2nix/tapi-shim/build/libs
+              cp ${tapi-shim-jar} crates/gradle2nix/tapi-shim/build/libs/tapi-shim.jar
             '';
             buildPhase = "cargo clippy --workspace --all-targets -- -D warnings";
             installPhase = "mkdir -p $out";
@@ -228,8 +228,8 @@
             nativeBuildInputs = sharedNativeBuildInputs;
             buildInputs = sharedBuildInputs;
             preBuild = ''
-              mkdir -p tapi-shim/build/libs
-              cp ${tapi-shim-jar} tapi-shim/build/libs/tapi-shim.jar
+              mkdir -p crates/gradle2nix/tapi-shim/build/libs
+              cp ${tapi-shim-jar} crates/gradle2nix/tapi-shim/build/libs/tapi-shim.jar
             '';
             buildPhase = "cargo test --workspace";
             installPhase = "mkdir -p $out";
