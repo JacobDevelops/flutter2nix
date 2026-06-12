@@ -387,6 +387,15 @@ GRADLEW_EOF
         # the Gradle JVM instead. Placed here (not in the project's gradle.properties)
         # so it reaches every build in the composite, including flutter_tools.
         echo "kotlin.compiler.execution.strategy=in-process" >> "$GRADLE_USER_HOME/gradle.properties"
+        # Hermetically generate .flutter-plugins-dependencies: flutter_tools
+        # writes it during pub get with developer-machine paths and it is
+        # gitignored, so a clean checkout ships none — but the Flutter Gradle
+        # plugin loader includeBuild()s every android plugin from the paths it
+        # records. Synthesized from package_config.json (Nix store roots) +
+        # each package's pubspec + pubspec.lock.
+        rm -f .flutter-plugins-dependencies
+        ${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3 \
+          ${./generate-flutter-plugins.py} "$(cat ${flutterSdk}/version)"
         # flutter build --no-pub never regenerates GeneratedPluginRegistrant.java for
         # release mode, so a debug-style registrant still references dev-dependency
         # plugins (e.g. integration_test) that the Flutter Gradle plugin excludes from
