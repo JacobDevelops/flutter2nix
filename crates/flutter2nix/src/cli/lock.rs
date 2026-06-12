@@ -8,6 +8,7 @@ pub struct LockCommand {
     pub gradle_cache_dir: Option<PathBuf>,
     pub gradle_user_home: Option<PathBuf>,
     pub timeout_secs: u64,
+    pub shim_timeout_secs: u64,
 }
 
 /// Resolve the project's dependency graph into a FlutterLockfile (in memory).
@@ -18,6 +19,7 @@ pub async fn generate_lockfile(
     gradle_cache_dir: Option<&Path>,
     gradle_user_home: Option<&Path>,
     timeout_secs: u64,
+    shim_timeout_secs: u64,
 ) -> anyhow::Result<crate::lockfile::FlutterLockfile> {
     anyhow::ensure!(
         crate::detect::detect_flutter_project(project_dir),
@@ -33,6 +35,7 @@ pub async fn generate_lockfile(
             gradle_cache_dir,
             gradle_user_home,
             timeout_secs,
+            shim_timeout_secs,
         )
         .await
         .with_context(|| {
@@ -76,6 +79,7 @@ pub async fn run(cmd: LockCommand) -> anyhow::Result<()> {
         cmd.gradle_cache_dir.as_deref(),
         cmd.gradle_user_home.as_deref(),
         cmd.timeout_secs,
+        cmd.shim_timeout_secs,
     )
     .await?;
 

@@ -94,10 +94,12 @@ pub async fn prefetch_content_hash(
     client: &reqwest::Client,
     cache: &ResolveCache,
 ) -> anyhow::Result<String> {
+    let source_key = src.source_key()?;
+
     match src {
         PodSourceKind::Http { url } => {
             // Cache lookup
-            if let Some(Some(hex)) = cache.lookup_sha256(url) {
+            if let Some(Some(hex)) = cache.lookup_sha256(&source_key) {
                 // Verify hash matches expected (if provided)
                 if let Some(expected) = expected_sha256 {
                     if hex != expected {
@@ -128,12 +130,10 @@ pub async fn prefetch_content_hash(
                 }
             }
 
-            cache.store_sha256(url, Some(hash_hex.clone()));
+            cache.store_sha256(&source_key, Some(hash_hex.clone()));
             Ok(hash_hex)
         }
         PodSourceKind::Git { url, rev } => {
-            let source_key = format!("git+{}#{}", url, rev);
-
             // Cache lookup
             if let Some(Some(hex)) = cache.lookup_sha256(&source_key) {
                 return Ok(hex);

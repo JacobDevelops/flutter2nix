@@ -45,6 +45,22 @@ pub enum PodSourceKind {
     Path { path: String },
 }
 
+impl PodSourceKind {
+    /// Compute the source key for caching/deduplication purposes.
+    /// HTTP: the URL itself.
+    /// Git: git+{url}#{rev}.
+    /// Path: returns error (path pods should never reach prefetch).
+    pub fn source_key(&self) -> anyhow::Result<String> {
+        match self {
+            PodSourceKind::Http { url } => Ok(url.clone()),
+            PodSourceKind::Git { url, rev } => Ok(format!("git+{}#{}", url, rev)),
+            PodSourceKind::Path { .. } => {
+                anyhow::bail!("path pods have no source key")
+            }
+        }
+    }
+}
+
 /// Parse a Podfile.lock (YAML format) into a structured PodfileLock.
 pub fn parse_podfile_lock(yaml: &str) -> anyhow::Result<PodfileLock> {
     let value: Value = serde_yml::from_str(yaml)

@@ -7,6 +7,7 @@ pub struct CheckCommand {
     pub gradle_cache_dir: Option<PathBuf>,
     pub gradle_user_home: Option<PathBuf>,
     pub timeout_secs: u64,
+    pub shim_timeout_secs: u64,
 }
 
 /// Flow: regenerate the lockfile in memory → read the on-disk flutter2nix.lock →
@@ -18,6 +19,7 @@ pub async fn run(cmd: CheckCommand) -> anyhow::Result<()> {
         cmd.gradle_cache_dir.as_deref(),
         cmd.gradle_user_home.as_deref(),
         cmd.timeout_secs,
+        cmd.shim_timeout_secs,
     )
     .await?;
 

@@ -159,7 +159,9 @@ gradle.settingsEvaluated { settings ->
                 }
             }
         }
-    } catch (Exception ignored) {}
+    } catch (Exception e) {
+        System.err.println("FLUTTER2NIX_CONFIG_SKIP: settings buildscript classpath resolution failed: ${e.message}")
+    }
 }
 
 gradle.projectsEvaluated {
@@ -189,15 +191,23 @@ gradle.projectsEvaluated {
                     }
                 }
             }
-        } catch (Exception ignored) {}
-        proj.configurations.names.toList().each { configName ->
+        } catch (Exception e) {
+            System.err.println("FLUTTER2NIX_CONFIG_SKIP: buildscript classpath resolution failed for ${proj.path}: ${e.message}")
+        }
+        // Collect from ALL resolvable configurations in projectsEvaluated, not just test-excluded ones.
+        // The flutter2nixDepsCollect task later refines to only *Classpath configs, but we must be
+        // comprehensive here to avoid nondeterminism where some configs only resolve after others complete.
+        def sortedConfigNames = proj.configurations.names.toList().sort()
+        sortedConfigNames.each { configName ->
             if (configName.startsWith('_') || configName.startsWith('test') || configName.startsWith('Test')) return
             try {
                 def cfg = proj.configurations.getByName(configName)
                 if (cfg.canBeResolved) {
                     captureGraphComponents(cfg, configName, seen, allArtifacts, gradleHomeDir, componentArtifacts)
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                System.err.println("FLUTTER2NIX_CONFIG_SKIP: ${proj.path}:${configName} resolution failed: ${e.message}")
+            }
         }
     }
     // Capture POM/module metadata for eagerly-collected buildscript artifacts.
@@ -236,7 +246,9 @@ gradle.projectsEvaluated {
                         if (config.canBeResolved) {
                             captureGraphComponents(config, configName, seen, allArtifacts, gradleHomeDir, componentArtifacts)
                         }
-                    } catch (Exception ignored) {}
+                    } catch (Exception e) {
+                        System.err.println("FLUTTER2NIX_CONFIG_SKIP: ${proj.path}:${configName} (collectTask) resolution failed: ${e.message}")
+                    }
                 }
                 try {
                     def bsCfg = proj.buildscript.configurations.findByName('classpath')
@@ -252,7 +264,9 @@ gradle.projectsEvaluated {
                             }
                         }
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    System.err.println("FLUTTER2NIX_CONFIG_SKIP: ${proj.path} buildscript (collectTask) resolution failed: ${e.message}")
+                }
             }
         }
     }

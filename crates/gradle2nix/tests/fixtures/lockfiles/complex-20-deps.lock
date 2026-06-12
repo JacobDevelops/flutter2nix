@@ -2,24 +2,6 @@
   "version": "1",
   "nodes": [
     {
-      "name": "com.google.guava:guava:31.1-jre",
-      "version": "31.1-jre",
-      "url": "https://repo.maven.apache.org/maven2/com/google/guava/guava/31.1-jre/guava-31.1-jre.jar",
-      "sha256": "c4b87ce48bf565fce5dfc5db0ce5f13f69e58e6b0f7b960e42ab2e42e7cef83c"
-    },
-    {
-      "name": "junit:junit:4.13.2",
-      "version": "4.13.2",
-      "url": "https://repo.maven.apache.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar",
-      "sha256": "8e495b634469d64fb8acfa3495a065cdc1e19432e3508bfc5cc1e73eaebc19b0"
-    },
-    {
-      "name": "org.slf4j:slf4j-api:2.0.9",
-      "version": "2.0.9",
-      "url": "https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/2.0.9/slf4j-api-2.0.9.jar",
-      "sha256": "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-    },
-    {
       "name": "ch.qos.logback:logback-classic:1.4.11",
       "version": "1.4.11",
       "url": "https://repo.maven.apache.org/maven2/ch/qos/logback/logback-classic/1.4.11/logback-classic-1.4.11.jar",
@@ -32,16 +14,10 @@
       "sha256": "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321"
     },
     {
-      "name": "org.apache.commons:commons-lang3:3.13.0",
-      "version": "3.13.0",
-      "url": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-lang3/3.13.0/commons-lang3-3.13.0.jar",
-      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-    },
-    {
-      "name": "com.fasterxml.jackson.core:jackson-databind:2.15.2",
+      "name": "com.fasterxml.jackson.core:jackson-annotations:2.15.2",
       "version": "2.15.2",
-      "url": "https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.15.2/jackson-databind-2.15.2.jar",
-      "sha256": "1a2b3c4d5e6f78901a2b3c4d5e6f78901a2b3c4d5e6f78901a2b3c4d5e6f7890"
+      "url": "https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-annotations/2.15.2/jackson-annotations-2.15.2.jar",
+      "sha256": "3c4d5e6f78901234c4d5e6f78901234c4d5e6f78901234c4d5e6f78901234c4d"
     },
     {
       "name": "com.fasterxml.jackson.core:jackson-core:2.15.2",
@@ -50,52 +26,16 @@
       "sha256": "2b3c4d5e6f789012b3c4d5e6f789012b3c4d5e6f789012b3c4d5e6f789012b3c"
     },
     {
-      "name": "com.fasterxml.jackson.core:jackson-annotations:2.15.2",
+      "name": "com.fasterxml.jackson.core:jackson-databind:2.15.2",
       "version": "2.15.2",
-      "url": "https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-annotations/2.15.2/jackson-annotations-2.15.2.jar",
-      "sha256": "3c4d5e6f78901234c4d5e6f78901234c4d5e6f78901234c4d5e6f78901234c4d"
+      "url": "https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.15.2/jackson-databind-2.15.2.jar",
+      "sha256": "1a2b3c4d5e6f78901a2b3c4d5e6f78901a2b3c4d5e6f78901a2b3c4d5e6f7890"
     },
     {
-      "name": "org.jetbrains.kotlin:kotlin-stdlib:1.9.0",
-      "version": "1.9.0",
-      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/1.9.0/kotlin-stdlib-1.9.0.jar",
-      "sha256": "4d5e6f78901234564d5e6f78901234564d5e6f78901234564d5e6f7890123456"
-    },
-    {
-      "name": "org.jetbrains.kotlin:kotlin-stdlib-common:1.9.0",
-      "version": "1.9.0",
-      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib-common/1.9.0/kotlin-stdlib-common-1.9.0.jar",
-      "sha256": "5e6f7890123456785e6f7890123456785e6f7890123456785e6f789012345678"
-    },
-    {
-      "name": "org.jetbrains:annotations:24.0.1",
-      "version": "24.0.1",
-      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/annotations/24.0.1/annotations-24.0.1.jar",
-      "sha256": "6f7890123456789a6f7890123456789a6f7890123456789a6f7890123456789a"
-    },
-    {
-      "name": "io.netty:netty-codec-http:4.1.100.Final",
-      "version": "4.1.100.Final",
-      "url": "https://repo.maven.apache.org/maven2/io/netty/netty-codec-http/4.1.100.Final/netty-codec-http-4.1.100.Final.jar",
-      "sha256": "7890123456789abc7890123456789abc7890123456789abc7890123456789abc"
-    },
-    {
-      "name": "io.netty:netty-handler:4.1.100.Final",
-      "version": "4.1.100.Final",
-      "url": "https://repo.maven.apache.org/maven2/io/netty/netty-handler/4.1.100.Final/netty-handler-4.1.100.Final.jar",
-      "sha256": "890123456789abcd890123456789abcd890123456789abcd890123456789abcd"
-    },
-    {
-      "name": "io.netty:netty-codec:4.1.100.Final",
-      "version": "4.1.100.Final",
-      "url": "https://repo.maven.apache.org/maven2/io/netty/netty-codec/4.1.100.Final/netty-codec-4.1.100.Final.jar",
-      "sha256": "90123456789abcde90123456789abcde90123456789abcde90123456789abcde"
-    },
-    {
-      "name": "io.netty:netty-transport:4.1.100.Final",
-      "version": "4.1.100.Final",
-      "url": "https://repo.maven.apache.org/maven2/io/netty/netty-transport/4.1.100.Final/netty-transport-4.1.100.Final.jar",
-      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde0"
+      "name": "com.google.guava:guava:31.1-jre",
+      "version": "31.1-jre",
+      "url": "https://repo.maven.apache.org/maven2/com/google/guava/guava/31.1-jre/guava-31.1-jre.jar",
+      "sha256": "c4b87ce48bf565fce5dfc5db0ce5f13f69e58e6b0f7b960e42ab2e42e7cef83c"
     },
     {
       "name": "io.netty:netty-buffer:4.1.100.Final",
@@ -104,10 +44,70 @@
       "sha256": "123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef1"
     },
     {
+      "name": "io.netty:netty-codec-http:4.1.100.Final",
+      "version": "4.1.100.Final",
+      "url": "https://repo.maven.apache.org/maven2/io/netty/netty-codec-http/4.1.100.Final/netty-codec-http-4.1.100.Final.jar",
+      "sha256": "7890123456789abc7890123456789abc7890123456789abc7890123456789abc"
+    },
+    {
+      "name": "io.netty:netty-codec:4.1.100.Final",
+      "version": "4.1.100.Final",
+      "url": "https://repo.maven.apache.org/maven2/io/netty/netty-codec/4.1.100.Final/netty-codec-4.1.100.Final.jar",
+      "sha256": "90123456789abcde90123456789abcde90123456789abcde90123456789abcde"
+    },
+    {
       "name": "io.netty:netty-common:4.1.100.Final",
       "version": "4.1.100.Final",
       "url": "https://repo.maven.apache.org/maven2/io/netty/netty-common/4.1.100.Final/netty-common-4.1.100.Final.jar",
       "sha256": "23456789abcdef01234567890abcdef01234567890abcdef01234567890abcde"
+    },
+    {
+      "name": "io.netty:netty-handler:4.1.100.Final",
+      "version": "4.1.100.Final",
+      "url": "https://repo.maven.apache.org/maven2/io/netty/netty-handler/4.1.100.Final/netty-handler-4.1.100.Final.jar",
+      "sha256": "890123456789abcd890123456789abcd890123456789abcd890123456789abcd"
+    },
+    {
+      "name": "io.netty:netty-transport:4.1.100.Final",
+      "version": "4.1.100.Final",
+      "url": "https://repo.maven.apache.org/maven2/io/netty/netty-transport/4.1.100.Final/netty-transport-4.1.100.Final.jar",
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde0"
+    },
+    {
+      "name": "junit:junit:4.13.2",
+      "version": "4.13.2",
+      "url": "https://repo.maven.apache.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar",
+      "sha256": "8e495b634469d64fb8acfa3495a065cdc1e19432e3508bfc5cc1e73eaebc19b0"
+    },
+    {
+      "name": "org.apache.commons:commons-lang3:3.13.0",
+      "version": "3.13.0",
+      "url": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-lang3/3.13.0/commons-lang3-3.13.0.jar",
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "name": "org.hamcrest:hamcrest:2.2",
+      "version": "2.2",
+      "url": "https://repo.maven.apache.org/maven2/org/hamcrest/hamcrest/2.2/hamcrest-2.2.jar",
+      "sha256": "456789abcdef0123456789012abcdef0123456789012abcdef0123456789abcd"
+    },
+    {
+      "name": "org.jetbrains.kotlin:kotlin-stdlib-common:1.9.0",
+      "version": "1.9.0",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib-common/1.9.0/kotlin-stdlib-common-1.9.0.jar",
+      "sha256": "5e6f7890123456785e6f7890123456785e6f7890123456785e6f789012345678"
+    },
+    {
+      "name": "org.jetbrains.kotlin:kotlin-stdlib:1.9.0",
+      "version": "1.9.0",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/1.9.0/kotlin-stdlib-1.9.0.jar",
+      "sha256": "4d5e6f78901234564d5e6f78901234564d5e6f78901234564d5e6f7890123456"
+    },
+    {
+      "name": "org.jetbrains:annotations:24.0.1",
+      "version": "24.0.1",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/annotations/24.0.1/annotations-24.0.1.jar",
+      "sha256": "6f7890123456789a6f7890123456789a6f7890123456789a6f7890123456789a"
     },
     {
       "name": "org.mockito:mockito-core:5.5.0",
@@ -116,10 +116,10 @@
       "sha256": "3456789abcdef012345678901abcdef012345678901abcdef012345678901abc"
     },
     {
-      "name": "org.hamcrest:hamcrest:2.2",
-      "version": "2.2",
-      "url": "https://repo.maven.apache.org/maven2/org/hamcrest/hamcrest/2.2/hamcrest-2.2.jar",
-      "sha256": "456789abcdef0123456789012abcdef0123456789012abcdef0123456789abcd"
+      "name": "org.slf4j:slf4j-api:2.0.9",
+      "version": "2.0.9",
+      "url": "https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/2.0.9/slf4j-api-2.0.9.jar",
+      "sha256": "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
     }
   ]
 }

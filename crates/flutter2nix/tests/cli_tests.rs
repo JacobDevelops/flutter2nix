@@ -32,6 +32,7 @@ async fn test_e2e_real_android() {
         gradle_cache_dir: None,
         gradle_user_home: None,
         timeout_secs: 300,
+        shim_timeout_secs: 1800,
     })
     .await;
     eprintln!("[bench] tapi+resolve: {:.2?}", t_lock.elapsed());
@@ -87,6 +88,7 @@ async fn test_lock_simple_android_flutter() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await
     .unwrap();
@@ -119,6 +121,7 @@ async fn test_lock_android_section_present() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await
     .unwrap();
@@ -150,6 +153,7 @@ async fn test_lock_ios_absent_for_android_only_project() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await
     .unwrap();
@@ -176,6 +180,7 @@ async fn test_flutter_lock_android_only() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await
     .expect("flutter lock must succeed");
@@ -207,6 +212,7 @@ async fn test_lock_fails_without_pubspec() {
         gradle_cache_dir: None,
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await;
 
@@ -232,6 +238,7 @@ async fn test_check_fresh_lockfile() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await;
     assert!(
@@ -256,6 +263,7 @@ async fn test_check_stale_lockfile() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await
     .expect_err("check must fail for a stale lockfile");
@@ -310,6 +318,7 @@ async fn test_lock_android_and_ios_sections() {
         )),
         None,
         60,
+        1800,
     )
     .await
     .unwrap();

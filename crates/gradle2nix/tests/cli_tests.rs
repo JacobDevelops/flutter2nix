@@ -14,6 +14,7 @@ async fn test_cli_lock_full_pipeline() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await
     .unwrap();
@@ -41,6 +42,7 @@ async fn test_cli_check_fresh_lockfile() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await;
 
@@ -64,6 +66,7 @@ async fn test_cli_check_stale_lockfile() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await;
 
@@ -128,6 +131,7 @@ async fn test_lock_output_flag_writes_to_specified_path() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await
     .unwrap();
@@ -172,6 +176,7 @@ async fn test_e2e_lock_check_generate_full_pipeline() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await
     .expect("lock phase must succeed");
@@ -189,6 +194,7 @@ async fn test_e2e_lock_check_generate_full_pipeline() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await;
 
@@ -251,6 +257,7 @@ async fn test_e2e_nix_eval_generated_output() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await
     .expect("lock phase must succeed");
@@ -309,6 +316,7 @@ async fn test_e2e_real_gradle_no_mocks() {
         gradle_cache_dir: None,
         gradle_user_home: None,
         timeout_secs: 300,
+        shim_timeout_secs: 1800,
     })
     .await;
 
@@ -377,6 +385,7 @@ async fn test_cli_lock_android_fixture() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await;
 
@@ -461,6 +470,7 @@ async fn test_e2e_gradle9_no_mocks() {
         gradle_cache_dir: None,
         gradle_user_home: None,
         timeout_secs: 300,
+        shim_timeout_secs: 1800,
     })
     .await;
 
@@ -530,6 +540,7 @@ async fn test_cli_lock_refuses_empty_artifact_set() {
         )),
         gradle_user_home: None,
         timeout_secs: 60,
+        shim_timeout_secs: 1800,
     })
     .await;
 
@@ -556,6 +567,7 @@ async fn test_cli_lock_discovery_phases() {
         gradle_cache_dir: Some(PathBuf::from("tests/fixtures/maven-repos/discovery-stub")),
         gradle_user_home: Some(PathBuf::from("tests/fixtures/gradle-homes/discovery-home")),
         timeout_secs: 10,
+        shim_timeout_secs: 1800,
     })
     .await;
     assert!(

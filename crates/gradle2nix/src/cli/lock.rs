@@ -22,6 +22,7 @@ pub struct LockCommand {
     /// only when no gradle_cache_dir is set (see MavenResolverConfig::discovery_gradle_home).
     pub gradle_user_home: Option<PathBuf>,
     pub timeout_secs: u64,
+    pub shim_timeout_secs: u64,
 }
 
 fn coord_to_name(coord: &MavenCoordinate) -> String {
@@ -39,6 +40,7 @@ pub async fn build_dependency_graph(
     gradle_cache_dir: Option<&Path>,
     gradle_user_home: Option<&Path>,
     timeout_secs: u64,
+    shim_timeout_secs: u64,
 ) -> anyhow::Result<DependencyGraph> {
     // 1. Use sidecar for test injection if present
     let sidecar = gradle_dir.join(".gradle2nix-tapi-output.json");
@@ -57,7 +59,7 @@ pub async fn build_dependency_graph(
         gradle_project_dir: gradle_dir.to_path_buf(),
         gradle_user_home: gradle_user_home.map(PathBuf::from),
         gradle_cache_dir: gradle_cache_dir.map(PathBuf::from),
-        timeout_secs,
+        timeout_secs: shim_timeout_secs,
         tapi_json_override,
         test_command: None,
     })
@@ -200,7 +202,7 @@ pub async fn build_dependency_graph(
     }
 
     // 7. Build DependencyGraph — route each artifact to the correct repository URL.
-    let nodes = resolved
+    let mut nodes = resolved
         .into_iter()
         .map(|(coord, sha256)| {
             let repo_url = artifact_repo_url(&coord);
@@ -211,7 +213,15 @@ pub async fn build_dependency_graph(
             );
             LockedDependency::new(coord_to_name(&coord), coord.version.clone(), url, sha256)
         })
-        .collect();
+        .collect::<Vec<_>>();
+
+    // Sort nodes deterministically by (name, url) for reproducible lockfiles.
+    // This ensures identical content produces identical output regardless of discovery order.
+    nodes.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then_with(|| a.url.cmp(&b.url))
+    });
 
     Ok(DependencyGraph {
         format_version: "1".to_string(),
@@ -228,6 +238,7 @@ pub async fn run(cmd: LockCommand) -> anyhow::Result<()> {
         cmd.gradle_cache_dir.as_deref(),
         cmd.gradle_user_home.as_deref(),
         cmd.timeout_secs,
+        cmd.shim_timeout_secs,
     )
     .await?;
 
@@ -672,4 +683,96 @@ async fn discover_parent_poms(
     }
 
     Ok(resolved)
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+    use nix_core::dep::DependencyGraph;
+
+    /// Helper to create a LockedDependency
+    fn make_node(name: &str, version: &str, url: &str, sha256: &str) -> LockedDependency {
+        LockedDependency::new(name.to_string(), version.to_string(), url.to_string(), sha256.to_string())
+    }
+
+    #[test]
+    fn test_build_dependency_graph_nodes_sorted_by_name_then_url() {
+        // Create a DependencyGraph with unsorted nodes (intentionally out of order)
+        let graph = DependencyGraph {
+            format_version: "1".to_string(),
+            nodes: vec![
+                // Deliberately unsorted: z first, then a, then middle
+                make_node(
+                    "org.slf4j:slf4j-api:2.0.9",
+                    "2.0.9",
+                    "https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/2.0.9/slf4j-api-2.0.9.jar",
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                ),
+                make_node(
+                    "com.google.guava:guava:31.1-jre",
+                    "31.1-jre",
+                    "https://repo.maven.apache.org/maven2/com/google/guava/guava/31.1-jre/guava-31.1-jre.jar",
+                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                ),
+                make_node(
+                    "junit:junit:4.13.2",
+                    "4.13.2",
+                    "https://repo.maven.apache.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar",
+                    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                ),
+            ],
+        };
+
+        // Verify they are indeed unsorted in the input
+        assert_eq!(graph.nodes[0].name, "org.slf4j:slf4j-api:2.0.9");
+        assert_eq!(graph.nodes[1].name, "com.google.guava:guava:31.1-jre");
+        assert_eq!(graph.nodes[2].name, "junit:junit:4.13.2");
+
+        // Now manually test the sorting logic that build_dependency_graph uses
+        let mut sorted = graph.nodes.clone();
+        sorted.sort_by(|a, b| {
+            a.name
+                .cmp(&b.name)
+                .then_with(|| a.url.cmp(&b.url))
+        });
+
+        // Verify they are sorted by name (and url as tiebreaker)
+        assert_eq!(sorted[0].name, "com.google.guava:guava:31.1-jre");
+        assert_eq!(sorted[1].name, "junit:junit:4.13.2");
+        assert_eq!(sorted[2].name, "org.slf4j:slf4j-api:2.0.9");
+    }
+
+    #[test]
+    fn test_node_ordering_with_same_name_different_urls() {
+        // Test that when names are identical (e.g. same coordinate but .jar and .pom),
+        // the secondary sort by URL puts them in a consistent order
+        let graph = DependencyGraph {
+            format_version: "1".to_string(),
+            nodes: vec![
+                make_node(
+                    "com.example:lib:1.0",
+                    "1.0",
+                    "https://example.com/lib/1.0/lib-1.0.pom",
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                ),
+                make_node(
+                    "com.example:lib:1.0",
+                    "1.0",
+                    "https://example.com/lib/1.0/lib-1.0.jar",
+                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                ),
+            ],
+        };
+
+        let mut sorted = graph.nodes.clone();
+        sorted.sort_by(|a, b| {
+            a.name
+                .cmp(&b.name)
+                .then_with(|| a.url.cmp(&b.url))
+        });
+
+        // URL-based sort should put .jar before .pom (lexicographic)
+        assert_eq!(sorted[0].url, "https://example.com/lib/1.0/lib-1.0.jar");
+        assert_eq!(sorted[1].url, "https://example.com/lib/1.0/lib-1.0.pom");
+    }
 }

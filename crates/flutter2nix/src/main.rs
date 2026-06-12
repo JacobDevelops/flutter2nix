@@ -43,9 +43,13 @@ struct LockArgs {
     #[arg(long)]
     gradle_user_home: Option<PathBuf>,
 
-    /// Timeout in seconds for network requests
+    /// Timeout in seconds for per-HTTP-request operations
     #[arg(long, default_value = "60")]
     timeout_secs: u64,
+
+    /// Timeout in seconds for entire TAPI shim extraction run
+    #[arg(long, default_value = "1800")]
+    shim_timeout_secs: u64,
 }
 
 #[derive(Parser)]
@@ -71,9 +75,13 @@ struct CheckArgs {
     #[arg(long)]
     gradle_user_home: Option<PathBuf>,
 
-    /// Timeout in seconds for network requests
+    /// Timeout in seconds for per-HTTP-request operations
     #[arg(long, default_value = "60")]
     timeout_secs: u64,
+
+    /// Timeout in seconds for entire TAPI shim extraction run
+    #[arg(long, default_value = "1800")]
+    shim_timeout_secs: u64,
 }
 
 fn parse_repositories(repositories: Option<String>) -> Option<Vec<String>> {
@@ -93,6 +101,7 @@ async fn main() -> anyhow::Result<()> {
                 gradle_cache_dir: lock_args.gradle_cache_dir,
                 gradle_user_home: lock_args.gradle_user_home,
                 timeout_secs: lock_args.timeout_secs,
+                shim_timeout_secs: lock_args.shim_timeout_secs,
             })
             .await
         }
@@ -104,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
                 gradle_cache_dir: check_args.gradle_cache_dir,
                 gradle_user_home: check_args.gradle_user_home,
                 timeout_secs: check_args.timeout_secs,
+                shim_timeout_secs: check_args.shim_timeout_secs,
             })
             .await
         }

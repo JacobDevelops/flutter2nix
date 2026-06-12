@@ -151,6 +151,12 @@ private fun tryInitScript(conn: ProjectConnection, kgpPersistentDir: File): List
             .withArguments(
                 "--quiet",
                 "--no-configuration-cache",
+                // Extraction resolves other projects' configurations from listener
+                // callbacks; under parallel execution Gradle 9 intermittently refuses
+                // those with "attempted without an exclusive lock", making the captured
+                // artifact set nondeterministic. Serial execution is deterministic and
+                // costs only a few seconds on a resolution-only build.
+                "--no-parallel",
                 "--project-cache-dir", projectCacheDir.absolutePath,
                 // Belt-and-suspenders: -P propagates to all included builds and sets the
                 // property via startParameter before GradleProperties is snapshotted.
@@ -188,7 +194,7 @@ private fun parseSentinelDeps(output: String): List<TapiArtifact> {
 
 private fun tryIdeaProject(conn: ProjectConnection, kgpPersistentDir: File): List<TapiArtifact> {
     val ideaProject = conn.model(IdeaProject::class.java)
-        .withArguments("--no-configuration-cache", "--quiet",
+        .withArguments("--no-configuration-cache", "--no-parallel", "--quiet",
             "-Pkotlin.project.persistent.dir=${kgpPersistentDir.absolutePath}")
         .get()
 

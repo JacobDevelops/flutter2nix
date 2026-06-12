@@ -150,11 +150,11 @@ pub async fn build_dependency_graph(
         }
     };
 
-    let mut to_prefetch: Vec<(String, String, PodSourceKind)> = Vec::new();
+    let mut pod_entries: Vec<(String, String, PodSourceKind)> = Vec::new();
     let mut failed_pods: Vec<(String, anyhow::Error)> = Vec::new();
 
     for (pod, source) in git_pods {
-        to_prefetch.push((pod.name, pod.version, source));
+        pod_entries.push((pod.name, pod.version, source));
     }
     for (pod, podspec_result) in resolved_pods {
         match podspec_result {
@@ -163,41 +163,83 @@ pub async fn build_dependency_graph(
                     // Path-sourced podspec — excluded like lockfile path pods.
                     continue;
                 }
-                to_prefetch.push((pod.name, pod.version, podspec.source));
+                pod_entries.push((pod.name, pod.version, podspec.source));
             }
             Err(e) => failed_pods.push((pod.name, e)),
         }
     }
 
-    let prefetch_results: Vec<_> = stream::iter(to_prefetch)
-        .map(|(name, version, source)| {
+    // Deduplicate by source key: group pods by their source identity.
+    // Multiple pods can share the same source (e.g., Firebase/Core and Firebase/Auth
+    // both from git+https://github.com/firebase/firebase-ios-sdk.git#rev).
+    // We prefetch each unique source once, then map the result back to all pods.
+    // BTreeMap so iteration (and thus prefetch submission and node emission) is
+    // deterministic without relying on the final sort alone.
+    use std::collections::BTreeMap;
+
+    let mut source_to_pods: BTreeMap<String, Vec<(String, String, PodSourceKind)>> =
+        BTreeMap::new();
+    for entry in pod_entries {
+        let source_key = entry.2.source_key()?;
+        source_to_pods.entry(source_key).or_default().push(entry);
+    }
+
+    // Prefetch each unique source (deduplicated)
+    let unique_sources: Vec<_> = source_to_pods
+        .values()
+        .map(|group| group[0].clone())
+        .collect();
+
+    let prefetch_results: Vec<_> = stream::iter(unique_sources)
+        .map(|(_name, _version, source)| {
             let client = &client;
             let cache = Arc::clone(&cache);
             async move {
                 let result =
                     crate::resolve_cache::prefetch_content_hash(&source, None, client, &cache)
                         .await;
-                (name, version, source, result)
+                (source, result)
             }
         })
         .buffer_unordered(MAX_CONCURRENCY)
         .collect()
         .await;
 
+    // Build a map of source_key → result, then expand to all pods referencing that source
+    let mut source_key_to_result: BTreeMap<String, anyhow::Result<String>> = BTreeMap::new();
+    for (source, result) in prefetch_results {
+        let source_key = source.source_key().expect("source_key must succeed for non-path pods");
+        source_key_to_result.insert(source_key, result);
+    }
+
     let mut nodes = Vec::new();
-    for (name, version, source, result) in prefetch_results {
-        match result {
-            Ok(sha256) => {
-                let (url, dep_source) = match &source {
-                    PodSourceKind::Http { url } => (url.clone(), "pod-http"),
-                    PodSourceKind::Git { url, rev } => (format!("git+{}#{}", url, rev), "pod-git"),
-                    PodSourceKind::Path { .. } => unreachable!("path pods filtered above"),
-                };
-                let mut dep = nix_core::dep::LockedDependency::new(name, version, url, sha256);
-                dep.dep_source = Some(dep_source.to_string());
-                nodes.push(dep);
+    for (source_key, group) in source_to_pods {
+        match source_key_to_result.remove(&source_key) {
+            Some(Ok(sha256)) => {
+                // All pods in this group share the same source and hash
+                for (name, version, source) in group {
+                    let (url, dep_source) = match &source {
+                        PodSourceKind::Http { url } => (url.clone(), "pod-http"),
+                        PodSourceKind::Git { url, rev } => (format!("git+{}#{}", url, rev), "pod-git"),
+                        PodSourceKind::Path { .. } => unreachable!("path pods filtered above"),
+                    };
+                    let mut dep =
+                        nix_core::dep::LockedDependency::new(name, version, url, sha256.clone());
+                    dep.dep_source = Some(dep_source.to_string());
+                    nodes.push(dep);
+                }
             }
-            Err(e) => failed_pods.push((name, e)),
+            Some(Err(e)) => {
+                // One prefetch failure fails every pod sharing the source; name the
+                // shared source so the root cause isn't obscured by the fan-out.
+                for (name, _version, _source) in group {
+                    failed_pods.push((
+                        name,
+                        anyhow::anyhow!("prefetching shared source {}: {:#}", source_key, e),
+                    ));
+                }
+            }
+            None => unreachable!("source_key must exist in result map"),
         }
     }
 

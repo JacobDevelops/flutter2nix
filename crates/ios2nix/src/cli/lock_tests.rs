@@ -42,3 +42,45 @@ async fn test_lock_sidecar_excludes_path_pods() {
     assert_eq!(git_pod.dep_source.as_deref(), Some("pod-git"));
     assert!(git_pod.url.starts_with("git+") && git_pod.url.contains('#'));
 }
+
+#[test]
+fn test_pod_source_kind_source_key() {
+    // HTTP sources use the URL directly as the key
+    let http_src = PodSourceKind::Http {
+        url: "https://example.com/pod.zip".to_string(),
+    };
+    assert_eq!(
+        http_src.source_key().unwrap(),
+        "https://example.com/pod.zip"
+    );
+
+    // Git sources use git+url#rev format
+    let git_src = PodSourceKind::Git {
+        url: "https://github.com/firebase/firebase-ios-sdk.git".to_string(),
+        rev: "CocoaPods-11.15.0".to_string(),
+    };
+    assert_eq!(
+        git_src.source_key().unwrap(),
+        "git+https://github.com/firebase/firebase-ios-sdk.git#CocoaPods-11.15.0"
+    );
+
+    // Two pods with identical sources should produce identical keys
+    let git_src2 = PodSourceKind::Git {
+        url: "https://github.com/firebase/firebase-ios-sdk.git".to_string(),
+        rev: "CocoaPods-11.15.0".to_string(),
+    };
+    assert_eq!(git_src.source_key().unwrap(), git_src2.source_key().unwrap());
+
+    // Two pods with different revisions should produce different keys
+    let git_src_diff_rev = PodSourceKind::Git {
+        url: "https://github.com/firebase/firebase-ios-sdk.git".to_string(),
+        rev: "CocoaPods-11.14.0".to_string(),
+    };
+    assert_ne!(git_src.source_key().unwrap(), git_src_diff_rev.source_key().unwrap());
+
+    // Path pods should error
+    let path_src = PodSourceKind::Path {
+        path: "/path/to/pod".to_string(),
+    };
+    assert!(path_src.source_key().is_err());
+}
