@@ -46,6 +46,13 @@ pub async fn run(cmd: CheckCommand) -> anyhow::Result<()> {
         .lockfile
         .unwrap_or_else(|| cmd.ios_dir.join("ios2nix.lock"));
 
+    if !lockfile_path.exists() {
+        anyhow::bail!(
+            "lockfile not found at {} — run `ios2nix lock` to create it",
+            lockfile_path.display()
+        );
+    }
+
     let on_disk = nix_core::lockfile::read_lockfile(&lockfile_path)?;
     let diff = nix_core::lockfile::diff_lockfiles(&on_disk, &fresh);
 

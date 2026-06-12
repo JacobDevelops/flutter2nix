@@ -6,3 +6,4 @@
 {"timestamp":"2026-06-11T20:19:58+1000","commit":"688ff1b067d9","host":"Jacobs-MacBook-Pro.local arm64","results":[{"target":"ios-build","cold_secs":19.2,"warm_secs":13.9}]}
 {"timestamp":"2026-06-11T20:41:53+1000","commit":"ec8d2c3a28a1","host":"Jacobs-MacBook-Pro.local arm64","results":[{"target":"ios-lock","cold_secs":12.9,"warm_secs":0.3}]}
 {"timestamp":"2026-06-11T20:52:50+1000","commit":"e48a3770c588","host":"Jacobs-MacBook-Pro.local arm64","results":[{"target":"ios-build","cold_secs":29.2,"warm_secs":22.6}]}
+{"timestamp":"2026-06-12T17:35:23+1000","commit":"338a5d0c9bf0","host":"Jacobs-MacBook-Pro.local arm64","results":[{"target":"lock","cold_secs":137.2,"warm_secs":15.9},{"target":"gradle-build","cold_secs":33.3,"warm_secs":9.5},{"target":"flutter-build","cold_secs":60.8,"warm_secs":23.5},{"target":"ios-lock","cold_secs":12.9,"warm_secs":0.3},{"target":"ios-build","cold_secs":31.9,"warm_secs":23.8}]}

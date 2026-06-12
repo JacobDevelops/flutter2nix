@@ -180,6 +180,14 @@
           inherit ios2nix;
         } // e2eTests // iosE2eTests;
 
+        # Inject binaries into pkgs for use in derivations (especially ios2nix for signing workflows).
+        pkgs = pkgs // {
+          inherit gradle2nix;
+          flutter2nix = flutter2nix-cli;
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+          inherit ios2nix;
+        };
+
         # Checks: use buildRustPackage so Cargo.lock deps are vendored (no network in sandbox)
         checks = {
           cargo-check = rustPlatform.buildRustPackage {
@@ -193,7 +201,7 @@
               mkdir -p tapi-shim/build/libs
               cp ${tapi-shim-jar} tapi-shim/build/libs/tapi-shim.jar
             '';
-            buildPhase = "cargo check --workspace";
+            buildPhase = "cargo check --workspace --all-targets";
             installPhase = "mkdir -p $out";
             doCheck = false;
           };
@@ -208,7 +216,22 @@
               mkdir -p tapi-shim/build/libs
               cp ${tapi-shim-jar} tapi-shim/build/libs/tapi-shim.jar
             '';
-            buildPhase = "cargo clippy --workspace -- -D warnings";
+            buildPhase = "cargo clippy --workspace --all-targets -- -D warnings";
+            installPhase = "mkdir -p $out";
+            doCheck = false;
+          };
+          cargo-test = rustPlatform.buildRustPackage {
+            pname = "cargo-test";
+            version = "0.1.0";
+            src = ./.;
+            cargoLock.lockFile = ./Cargo.lock;
+            nativeBuildInputs = sharedNativeBuildInputs;
+            buildInputs = sharedBuildInputs;
+            preBuild = ''
+              mkdir -p tapi-shim/build/libs
+              cp ${tapi-shim-jar} tapi-shim/build/libs/tapi-shim.jar
+            '';
+            buildPhase = "cargo test --workspace";
             installPhase = "mkdir -p $out";
             doCheck = false;
           };
@@ -224,6 +247,38 @@
             pkgs = pkgs;
             lockFile = ./tests/fixtures/flutter/flutter-minimal.lock;
           }).mavenRepo;
+          # Guards every fixture lockfile against a bundletool POM-without-JAR. bundletool is a
+          # jar-packaged build-classpath artifact (AGP's FinalizeBundleTask resolves it at task
+          # time to sign the AAB). An offline lockfile that records a bundletool `.pom` without
+          # its `.jar` breaks `signReleaseBundle` (symptom: FinalizeBundleTask$BundleToolRunnable)
+          # whenever that version is selected. Such an entry is the fingerprint of a lockfile
+          # generated against a Gradle cache polluted by an unrelated build — regenerate with
+          # `gradle2nix lock` from a clean `--gradle-user-home`.
+          lockfile-bundletool-complete =
+            pkgs.runCommand "lockfile-bundletool-complete"
+              {
+                nativeBuildInputs = [ pkgs.jq ];
+                androidLock = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
+                iosLock = ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock;
+              } ''
+              fail=0
+              for lock in "$androidLock" "$iosLock"; do
+                urls=$(jq -r '(.nodes // .android.nodes // [])[].url | select(contains("/bundletool/"))' "$lock")
+                for ver in $(printf '%s\n' "$urls" | sed -nE 's#.*/bundletool/([^/]+)/.*#\1#p' | sort -u); do
+                  if printf '%s\n' "$urls" | grep -q "bundletool-$ver.pom" \
+                    && ! printf '%s\n' "$urls" | grep -q "bundletool-$ver.jar"; then
+                    echo "FAIL: $lock records bundletool $ver POM without its JAR" >&2
+                    fail=1
+                  fi
+                done
+              done
+              if [ "$fail" -ne 0 ]; then
+                echo "regenerate the lockfile with 'gradle2nix lock' from a clean --gradle-user-home" >&2
+                exit 1
+              fi
+              echo "ok: every bundletool version in every fixture lockfile has a matching JAR"
+              mkdir -p "$out"
+            '';
           # Type-only: verifies buildAndroidApp returns a derivation. Does not verify SDK content.
           buildAndroidApp-eval = let
             drv = self.lib.buildAndroidApp {

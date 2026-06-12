@@ -702,8 +702,17 @@ fn require_on_path(tool: &str) -> anyhow::Result<()> {
 }
 
 fn nix_build_path(repo_root: &Path, attr: &str) -> anyhow::Result<PathBuf> {
+    // The out-link registers a GC root: with `--no-link` the closure (init script +
+    // Maven repo) is unrooted, and low-disk auto-GC (e.g. determinate-nixd) can delete
+    // the repo mid-benchmark, failing offline Gradle resolution.
+    let gcroot_dir = repo_root.join("target/fnx-bench-gcroots");
+    std::fs::create_dir_all(&gcroot_dir).context("creating bench gc-root dir")?;
+    let out_link = gcroot_dir.join(attr.trim_start_matches(".#"));
     let out = Command::new("nix")
-        .args(["build", "--no-link", "--print-out-paths", attr])
+        .arg("build")
+        .arg("--out-link")
+        .arg(&out_link)
+        .args(["--print-out-paths", attr])
         .current_dir(repo_root)
         .output()
         .context("running nix build")?;

@@ -29,7 +29,7 @@ pub struct LockArgs {
     pub cache_dir: Option<PathBuf>,
 
     /// Timeout in seconds for HTTP requests
-    #[arg(long, default_value = "600")]
+    #[arg(long, default_value = "600", value_parser = clap::value_parser!(u64).range(1..=600))]
     pub timeout_secs: u64,
 }
 
@@ -114,7 +114,7 @@ pub async fn build_dependency_graph(
 
     // 4. Fetch podspecs for CDN pods (bounded concurrency).
     let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(timeout_secs.clamp(1, 600)))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .context("building HTTP client")?;
     let spec_repos_vec = if spec_repos.is_empty() {
@@ -253,7 +253,12 @@ fn build_graph_from_sidecar(json: &str) -> anyhow::Result<DependencyGraph> {
             sha256: String,
         },
         #[serde(rename = "path")]
-        Path { path: String },
+        // `path` mirrors the sidecar schema; path pods are intentionally
+        // excluded from the lockfile, so the field is deserialized but unread.
+        Path {
+            #[allow(dead_code)]
+            path: String,
+        },
     }
 
     #[derive(serde::Deserialize)]

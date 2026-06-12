@@ -74,12 +74,18 @@ pub fn run(cmd: BuildCommand) -> anyhow::Result<XcodeBuildOutput> {
             pod_cmd.arg("install");
             pod_cmd.arg("--no-repo-update");
 
-            let status = pod_cmd
-                .status()
+            let output = pod_cmd
+                .output()
                 .map_err(|e| anyhow::anyhow!("failed to run pod install: {}", e))?;
 
-            if !status.success() {
-                anyhow::bail!("pod install failed with status {}", status);
+            if !output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!(
+                    "pod install failed:\nstdout:\n{}\nstderr:\n{}",
+                    stdout,
+                    stderr
+                );
             }
         }
 

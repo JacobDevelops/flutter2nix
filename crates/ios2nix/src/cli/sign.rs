@@ -214,20 +214,26 @@ pub fn run(cmd: SignCommand) -> anyhow::Result<PathBuf> {
         );
     }
 
-    // Find the .app directory
+    // Find the .app directory — must be exactly one
     let payload_dir = work_dir.path().join("Payload");
-    let mut app_path = None;
+    let mut app_dirs = Vec::new();
 
     for entry in std::fs::read_dir(&payload_dir).context("failed to read Payload")? {
         let entry = entry.context("failed to read directory entry")?;
         let path = entry.path();
         if path.is_dir() && path.extension().is_some_and(|ext| ext == "app") {
-            app_path = Some(path);
-            break;
+            app_dirs.push(path);
         }
     }
 
-    let app_path = app_path.context("no .app found in Payload")?;
+    let app_path = match app_dirs.len() {
+        0 => anyhow::bail!("no .app found in Payload"),
+        1 => app_dirs.into_iter().next().unwrap(),
+        n => anyhow::bail!(
+            "Payload must contain exactly one .app directory, found {}",
+            n
+        ),
+    };
     let order = compute_signing_order(&app_path)?;
 
     // 1. Main-app frameworks
@@ -260,11 +266,16 @@ pub fn run(cmd: SignCommand) -> anyhow::Result<PathBuf> {
         );
     }
 
-    // 5. Repackage the IPA
+    // 5. Repackage the IPA — recreate output archive from entire work directory
+    // Remove existing output file if present to ensure a fresh archive
+    if cmd.output.exists() {
+        std::fs::remove_file(&cmd.output).context("failed to remove existing output IPA")?;
+    }
+
     let zip_output = Command::new("zip")
         .arg("-qry")
         .arg(&cmd.output)
-        .arg("Payload")
+        .arg(".")
         .current_dir(work_dir.path())
         .output()
         .context("failed to run zip")?;

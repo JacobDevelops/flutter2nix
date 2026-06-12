@@ -121,7 +121,7 @@ ios2nix lock --output flutter2nix.lock
 ```
 
 **Expected output:**
-```
+```text
 Resolving CocoaPods dependencies...
 Downloaded 42 pods (Firebase, GoogleUtilities, etc.)
 Wrote ios2nix.lock
@@ -140,7 +140,7 @@ ios2nix build \
 ```
 
 **Expected output:**
-```
+```text
 Analyzed workspace ios/Runner.xcworkspace
 Scheme: Runner
 Configuration: Release
@@ -159,7 +159,7 @@ ios2nix archive \
 ```
 
 **Expected output:**
-```
+```text
 Installing pods...
 Building archive: build/Runner.xcarchive
 Done. Archive size: 542 MB
@@ -178,7 +178,7 @@ ios2nix export \
 ```
 
 **Expected output:**
-```
+```text
 Setting up temporary keychain...
 Importing certificate from $IOS2NIX_P12_PATH...
 Installing provisioning profile...
@@ -201,7 +201,7 @@ ios2nix sign \
 ```
 
 **Expected output:**
-```
+```text
 Re-signing nested code (frameworks first, then extensions, then main app)...
 Resigned IPA: build/app-resigned.ipa
 Verifying signature...

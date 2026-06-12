@@ -115,9 +115,9 @@ pub async fn fetch_podspec(
     let md5_digest = md5::compute(name.as_bytes());
     let md5_hex = format!("{:x}", md5_digest);
     let mut chars = md5_hex.chars();
-    let s1 = chars.next().unwrap_or('0');
-    let s2 = chars.next().unwrap_or('0');
-    let s3 = chars.next().unwrap_or('0');
+    let s1 = chars.next().unwrap();
+    let s2 = chars.next().unwrap();
+    let s3 = chars.next().unwrap();
 
     for repo_url in &repos {
         // Try sharded layout: {repo}/Specs/{s1}/{s2}/{s3}/{Name}/{Version}/{Name}.podspec.json

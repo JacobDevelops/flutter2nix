@@ -79,12 +79,15 @@ pub fn run(cmd: ExportCommand) -> anyhow::Result<PathBuf> {
 }
 
 fn find_ipa_in_dir(dir: &Path) -> anyhow::Result<PathBuf> {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "ipa") {
-                return Ok(path);
-            }
+    use anyhow::Context;
+
+    let entries = std::fs::read_dir(dir)
+        .with_context(|| format!("failed to read directory {}", dir.display()))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "ipa") {
+            return Ok(path);
         }
     }
     anyhow::bail!("no .ipa file found in {}", dir.display())

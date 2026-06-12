@@ -84,19 +84,26 @@ impl ArchiveCommand {
         let has_profile = args.profile_specifier.is_some();
         let has_keychain = args.keychain.is_some();
 
-        let signing = if has_team_id || has_identity || has_profile || has_keychain {
-            // If any is present, all must be present
+        let (signing, keychain_path) = if has_team_id || has_identity || has_profile {
+            // If any of the three signing fields are present, all three plus keychain must be present
             if !(has_team_id && has_identity && has_profile && has_keychain) {
                 anyhow::bail!("signing requires all of: --team-id, --signing-identity, --profile-specifier, --keychain");
             }
-            Some(SigningConfig {
-                team_id: args.team_id.clone().unwrap(),
-                identity: args.signing_identity.clone().unwrap(),
-                profile_specifier: args.profile_specifier.clone().unwrap(),
-                keychain: args.keychain.clone().unwrap(),
-            })
+            (
+                Some(SigningConfig {
+                    team_id: args.team_id.clone().unwrap(),
+                    identity: args.signing_identity.clone().unwrap(),
+                    profile_specifier: args.profile_specifier.clone().unwrap(),
+                    keychain: args.keychain.clone().unwrap(),
+                }),
+                None,
+            )
+        } else if has_keychain {
+            // Keychain-only mode: signing settings are stamped in pbxproj
+            (None, args.keychain.clone())
         } else {
-            None
+            // No signing configuration
+            (None, None)
         };
 
         Ok(ArchiveCommand {
@@ -105,7 +112,7 @@ impl ArchiveCommand {
             configuration: args.configuration.clone(),
             archive_path: args.archive_path.clone(),
             signing,
-            keychain_path: None,
+            keychain_path,
             bundle_id: args.bundle_id.clone(),
             derived_data: args.derived_data.clone(),
             extra_path: args.extra_path.clone(),

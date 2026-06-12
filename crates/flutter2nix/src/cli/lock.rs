@@ -48,10 +48,12 @@ pub async fn generate_lockfile(
 
     let ios_dir = project_dir.join("ios");
     let ios_section = if crate::detect::detect_ios(project_dir) {
+        // CocoaPods resolution must not use the Gradle cache.
+        // TODO: future --ios-cache-dir flag for CocoaPods artifact caching
         let graph = ios2nix::cli::lock::build_dependency_graph(
             &ios_dir,
             &[],
-            gradle_cache_dir,
+            None,
             timeout_secs,
         )
         .await

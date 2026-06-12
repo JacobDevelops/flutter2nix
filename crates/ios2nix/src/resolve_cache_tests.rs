@@ -89,30 +89,19 @@ fn test_resolve_cache_persistence() {
     }
 }
 
-#[test]
-fn test_path_pod_no_hash() {
+#[tokio::test]
+async fn test_path_pod_no_hash() {
     let temp_dir = TempDir::new().unwrap();
-    let _cache = ResolveCache::open(temp_dir.path());
+    let cache = ResolveCache::open(temp_dir.path());
+
+    let client = reqwest::Client::new();
 
     let src = PodSourceKind::Path {
         path: "/path/to/pod".to_string(),
     };
 
-    // Path pods should return an error synchronously (no async needed for this test)
-    // We'll wrap in a simple tokio block
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // This is a placeholder; in real code this would be async
-        // For now, we document that path pods bail with an error message
-        match &src {
-            PodSourceKind::Path { .. } => {
-                Err::<String, _>(anyhow::anyhow!("path pods have no content hash"))
-            }
-            _ => Ok("should not reach".to_string()),
-        }
-    }));
+    let result = prefetch_content_hash(&src, None, &client, &cache).await;
 
-    assert!(result.is_ok());
-    let r = result.unwrap();
-    assert!(r.is_err());
-    assert!(r.unwrap_err().to_string().contains("path pods"));
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("path pods"));
 }

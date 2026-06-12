@@ -72,7 +72,12 @@ pub fn parse_profile_plist(plist_bytes: &[u8]) -> anyhow::Result<ProfileInfo> {
     let bundle_id = app_identifier
         .split_once('.')
         .map(|(_, rest)| rest)
-        .unwrap_or(app_identifier)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "application-identifier '{}' must contain team prefix (TEAMID.bundle.id)",
+                app_identifier
+            )
+        })?
         .to_string();
 
     Ok(ProfileInfo {

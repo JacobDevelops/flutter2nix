@@ -177,7 +177,6 @@ pub async fn prefetch_content_hash(
 }
 
 /// Download with one retry on transport errors
-#[allow(clippy::single_match)]
 async fn download_with_retry(client: &reqwest::Client, url: &str) -> anyhow::Result<Vec<u8>> {
     let timeout = std::time::Duration::from_secs(60);
     let mut last_error = None;
@@ -216,7 +215,7 @@ async fn download_with_retry(client: &reqwest::Client, url: &str) -> anyhow::Res
         }
     }
 
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("failed to download {}", url)))
+    Err(last_error.unwrap())
 }
 
 /// Compute SHA-256 hash of bytes and return as hex string

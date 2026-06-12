@@ -45,10 +45,17 @@ impl TempKeychain {
             );
         }
 
+        // Construct TempKeychain immediately to ensure Drop cleanup on any subsequent error
+        let kc = TempKeychain {
+            path: keychain_path,
+            password: password.to_string(),
+            persist: false,
+        };
+
         // security set-keychain-settings -lut 21600 "$KC"
         let output = Command::new("security")
             .args(["set-keychain-settings", "-lut", "21600"])
-            .arg(&keychain_path)
+            .arg(&kc.path)
             .output()
             .context("failed to run 'security set-keychain-settings'")?;
 
@@ -62,8 +69,8 @@ impl TempKeychain {
         // security unlock-keychain -p "$KPW" "$KC"
         let output = Command::new("security")
             .args(["unlock-keychain", "-p"])
-            .arg(password)
-            .arg(&keychain_path)
+            .arg(&kc.password)
+            .arg(&kc.path)
             .output()
             .context("failed to run 'security unlock-keychain'")?;
 
@@ -74,11 +81,7 @@ impl TempKeychain {
             );
         }
 
-        Ok(TempKeychain {
-            path: keychain_path,
-            password: password.to_string(),
-            persist: false,
-        })
+        Ok(kc)
     }
 
     /// Return the path to the keychain.

@@ -67,7 +67,7 @@ pub fn run(cmd: SignSetupCommand) -> anyhow::Result<PathBuf> {
         for entry in fs::read_dir(&cmd.profile).context("failed to read profile directory")? {
             let entry = entry.context("failed to read directory entry")?;
             let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "mobileprovision") {
+            if matches!(path.extension(), Some(ext) if ext == "mobileprovision") {
                 crate::provisioning::install_provisioning_profile(&path).with_context(|| {
                     format!("failed to install provisioning profile {}", path.display())
                 })?;

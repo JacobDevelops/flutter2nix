@@ -61,14 +61,14 @@
         in
         if m != null then builtins.elemAt m 1
         else if pubspecLock.sdks.dart == "any" then "null"
-        else "2.7";
+        else "3.0";
     in
     # Append the root package itself; rootUri "../" resolves from .dart_tool/.
     pkgs.runCommand "${name}-package-config.json" {
       nativeBuildInputs = [ pkgs.jq pkgs.yq ];
     } ''
       packageName="$(yq --raw-output .name '${src}/pubspec.yaml')"
-      jq --arg name "$packageName" --arg languageVersion ${languageVersion} \
+      jq --arg name "$packageName" --arg languageVersion "${languageVersion}" \
         '.packages |= . + [{ name: $name, rootUri: "../", packageUri: "lib/", languageVersion: (if $languageVersion == "null" then null else $languageVersion end) }]' \
         '${depPackageConfig}' > "$out"
     '';
