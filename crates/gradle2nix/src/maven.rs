@@ -65,6 +65,136 @@ async fn http_get(
     Err(last.expect("loop ran at least once"))
 }
 
+/// HEAD request with one retry on transport errors. Returns Ok(status) if the
+/// server is reachable, or Err if transport fails. Status 404 and other errors
+/// are returned as Ok(status), not as failures — the caller decides what to do.
+async fn http_head(
+    client: &reqwest::Client,
+    url: &str,
+    timeout_secs: u64,
+) -> anyhow::Result<reqwest::StatusCode> {
+    let per_try = Duration::from_secs(timeout_secs.min(MAX_HTTP_TIMEOUT_SECS));
+    let mut last: Option<anyhow::Error> = None;
+    for attempt in 0..2 {
+        match tokio::time::timeout(per_try, client.head(url).send()).await {
+            Ok(Ok(resp)) => return Ok(resp.status()),
+            Ok(Err(e)) => {
+                log::debug!("HTTP HEAD attempt {} failed for {}: {}", attempt + 1, url, e);
+                last =
+                    Some(anyhow::Error::new(e).context(format!("HTTP HEAD request failed for {}", url)));
+            }
+            Err(_) => {
+                log::debug!("HTTP HEAD attempt {} timed out for {}", attempt + 1, url);
+                last = Some(anyhow::anyhow!(
+                    "HTTP HEAD request timeout after {}s for {}",
+                    per_try.as_secs(),
+                    url
+                ));
+            }
+        }
+    }
+    Err(last.expect("loop ran at least once"))
+}
+
+/// Verify that an artifact URL exists and is accessible, trying fallback repos
+/// if the primarily-routed repo doesn't host it. Returns the verified URL and
+/// the repo that serves it, or an error if all repos return 404.
+///
+/// This ensures that every URL written to the lockfile is guaranteed to work
+/// at build time (or will fail consistently if unreachable).
+pub async fn verify_artifact_url(
+    coord: &MavenCoordinate,
+    primary_repo: &str,
+    fallback_repos: &[String],
+    client: &reqwest::Client,
+    timeout_secs: u64,
+    cache: Option<&ResolveCache>,
+) -> anyhow::Result<(String, String)> {
+    let artifact_path = coord.to_artifact_path();
+    let artifact_name = coord_to_internal_name(coord);
+
+    // Try primary repo first
+    let primary = primary_repo.trim_end_matches('/');
+    let primary_url = format!("{}/{}", primary, artifact_path);
+
+    if let Some(cached) = cache.and_then(|c| c.lookup_url_exists(&primary_url)) {
+        if cached {
+            log::debug!("URL verification cache hit (exists): {}", primary_url);
+            return Ok((primary_url, primary.to_string()));
+        }
+    }
+
+    let status = http_head(client, &primary_url, timeout_secs).await;
+    if let Ok(st) = status {
+        if st.is_success() || st.is_redirection() {
+            if let Some(c) = cache {
+                c.store_url_exists(&primary_url, true);
+            }
+            log::debug!("URL verification succeeded: {}", primary_url);
+            return Ok((primary_url, primary.to_string()));
+        }
+    }
+
+    // Try fallback repos
+    for fallback_repo in fallback_repos {
+        let repo = fallback_repo.trim_end_matches('/');
+        let url = format!("{}/{}", repo, artifact_path);
+
+        if let Some(cached) = cache.and_then(|c| c.lookup_url_exists(&url)) {
+            if cached {
+                log::debug!("URL verification cache hit (exists, fallback): {}", url);
+                return Ok((url, repo.to_string()));
+            }
+        }
+
+        let status = http_head(client, &url, timeout_secs).await;
+        if let Ok(st) = status {
+            if st.is_success() || st.is_redirection() {
+                if let Some(c) = cache {
+                    c.store_url_exists(&url, true);
+                }
+                log::debug!(
+                    "URL verification succeeded on fallback repo: {} (primary: {})",
+                    url,
+                    primary_url
+                );
+                return Ok((url, repo.to_string()));
+            }
+        }
+    }
+
+    // All repos failed — cache the 404s and return error
+    if let Some(c) = cache {
+        c.store_url_exists(&primary_url, false);
+        for fallback_repo in fallback_repos {
+            let repo = fallback_repo.trim_end_matches('/');
+            let url = format!("{}/{}", repo, artifact_path);
+            c.store_url_exists(&url, false);
+        }
+    }
+
+    anyhow::bail!(
+        "artifact URL verification failed for '{}': not found in any repository (primary: {}, fallbacks: {:?})",
+        artifact_name,
+        primary,
+        fallback_repos.iter().map(|r| r.trim_end_matches('/')).collect::<Vec<_>>()
+    )
+}
+
+/// Internal helper to get a coordinate name for error messages.
+fn coord_to_internal_name(coord: &MavenCoordinate) -> String {
+    match &coord.classifier {
+        Some(c) => format!(
+            "{}:{}:{}:{}@{}",
+            coord.group, coord.artifact, coord.version, c, coord.extension
+        ),
+        None => format!(
+            "{}:{}:{}@{}",
+            coord.group, coord.artifact, coord.version, coord.extension
+        ),
+    }
+}
+
 /// Route an artifact to the repository that actually hosts it. Used both for the
 /// download URL written into the lockfile and to order SHA-256 lookups so the
 /// hash always comes from the same repo as the lockfile URL (repos can serve

@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use crate::maven::{
     artifact_repo_url, extract_pom_bom_imports, extract_pom_direct_deps, extract_pom_parent,
-    fetch_pom_content, resolve_artifact_sha256, resolve_artifacts_batch, MavenCoordinate,
-    MavenResolverConfig,
+    fetch_pom_content, resolve_artifact_sha256, resolve_artifacts_batch, verify_artifact_url,
+    MavenCoordinate, MavenResolverConfig,
 };
 use crate::resolve_cache::ResolveCache;
 use crate::tapi::model::parse_tapi_output;
@@ -201,19 +201,92 @@ pub async fn build_dependency_graph(
         }
     }
 
-    // 7. Build DependencyGraph — route each artifact to the correct repository URL.
-    let mut nodes = resolved
-        .into_iter()
-        .map(|(coord, sha256)| {
-            let repo_url = artifact_repo_url(&coord);
-            let url = format!(
-                "{}/{}",
-                repo_url.trim_end_matches('/'),
-                coord.to_artifact_path()
+    // 7. Build DependencyGraph — verify each artifact URL and route to correct repository.
+    // URLs are verified via HEAD request: routed repo tried first, then fallbacks.
+    // Every URL in the lockfile is guaranteed to exist (or will fail consistently at build time).
+    // Verification is skipped in hermetic test mode (when gradle_cache_dir is set).
+    let mut nodes = if gradle_cache_dir.is_some() {
+        // Hermetic test mode: skip URL verification, URLs won't be reachable anyway
+        resolved
+            .into_iter()
+            .map(|(coord, sha256)| {
+                let repo_url = artifact_repo_url(&coord);
+                let url = format!(
+                    "{}/{}",
+                    repo_url.trim_end_matches('/'),
+                    coord.to_artifact_path()
+                );
+                LockedDependency::new(coord_to_name(&coord), coord.version.clone(), url, sha256)
+            })
+            .collect::<Vec<_>>()
+    } else {
+        // Production mode: verify every URL exists before writing to lockfile
+        use futures::stream::{self, StreamExt};
+
+        eprintln!("gradle2nix: verifying artifact URLs...");
+        let client = crate::maven::shared_http_client();
+        let verify_futures: Vec<_> = resolved
+            .into_iter()
+            .map(|(coord, sha256)| {
+                let primary_repo = artifact_repo_url(&coord);
+                let repo_urls = repo_urls.clone();
+                let client_ref = client.clone();
+                let cache = resolver_config.resolve_cache.clone();
+
+                async move {
+                    let fallbacks: Vec<String> = repo_urls
+                        .iter()
+                        .filter(|r| r.trim_end_matches('/') != primary_repo.trim_end_matches('/'))
+                        .cloned()
+                        .collect();
+
+                    match verify_artifact_url(
+                        &coord,
+                        &primary_repo,
+                        &fallbacks,
+                        &client_ref,
+                        timeout_secs,
+                        cache.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok((url, _serving_repo)) => {
+                            Ok(LockedDependency::new(coord_to_name(&coord), coord.version.clone(), url, sha256))
+                        }
+                        Err(e) => Err((coord, e)),
+                    }
+                }
+            })
+            .collect();
+
+        let mut nodes = Vec::new();
+        let mut failures: Vec<(MavenCoordinate, anyhow::Error)> = Vec::new();
+
+        for result in stream::iter(verify_futures)
+            .buffer_unordered(resolver_config.max_concurrency)
+            .collect::<Vec<_>>()
+            .await
+        {
+            match result {
+                Ok(node) => nodes.push(node),
+                Err((coord, e)) => failures.push((coord, e)),
+            }
+        }
+
+        if !failures.is_empty() {
+            let fail_messages: Vec<String> = failures
+                .iter()
+                .map(|(coord, e)| format!("  - {}: {:#}", coord.to_artifact_path(), e))
+                .collect();
+            anyhow::bail!(
+                "{} artifact URL(s) failed to verify:\n{}",
+                failures.len(),
+                fail_messages.join("\n")
             );
-            LockedDependency::new(coord_to_name(&coord), coord.version.clone(), url, sha256)
-        })
-        .collect::<Vec<_>>();
+        }
+
+        nodes
+    };
 
     // Sort nodes deterministically by (name, url) for reproducible lockfiles.
     // This ensures identical content produces identical output regardless of discovery order.

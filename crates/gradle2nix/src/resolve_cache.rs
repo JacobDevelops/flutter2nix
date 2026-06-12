@@ -26,6 +26,10 @@ struct CacheData {
     /// JARs, so warm runs don't re-hash hundreds of megabytes of artifacts.
     #[serde(default)]
     file_sha256: HashMap<String, (u64, i64, String)>,
+    /// artifact URL → existence verified (true = exists, false = 404).
+    /// Used for HEAD request caching during URL verification step.
+    #[serde(default)]
+    url_exists: HashMap<String, bool>,
 }
 
 pub struct ResolveCache {
@@ -99,6 +103,20 @@ impl ResolveCache {
             .unwrap()
             .file_sha256
             .insert(key.to_string(), (meta.len(), mtime, hex.to_string()));
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    /// `Some(true)` = URL exists, `Some(false)` = confirmed 404, `None` = never checked.
+    pub fn lookup_url_exists(&self, url: &str) -> Option<bool> {
+        self.data.lock().unwrap().url_exists.get(url).copied()
+    }
+
+    pub fn store_url_exists(&self, url: &str, exists: bool) {
+        self.data
+            .lock()
+            .unwrap()
+            .url_exists
+            .insert(url.to_string(), exists);
         self.dirty.store(true, Ordering::Relaxed);
     }
 
