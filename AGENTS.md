@@ -48,7 +48,7 @@ flutter2nix/
 | `flutter2nix` | bin | Composes gradle2nix + ios2nix into a unified lockfile |
 | `fnx` | bin | Dev utility — thin wrappers around cargo/nix subcommands |
 
-`tapi-shim` is a separate Kotlin/Gradle project under `tapi-shim/`. It is built via Gradle and its output JAR is bundled into `gradle2nix` at build time via `build.rs`.
+`tapi-shim` is a separate Kotlin/Gradle project under `crates/gradle2nix/tapi-shim/`. It is built via Gradle and its output JAR is bundled into `gradle2nix` at build time via `build.rs`.
 
 ---
 
