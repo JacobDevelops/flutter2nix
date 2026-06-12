@@ -133,11 +133,28 @@ def captureGraphComponents = { cfg, String scopeName, seen, allArtifacts, File h
         if (!(cid instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier)) return
         if (!cid.version || cid.version == 'unspecified') return
         def variantNames = comp.variants.collect { it.displayName }
-        compArtifacts(homeDir, cid.group, cid.module, cid.version, variantNames).each { art ->
+        def arts = compArtifacts(homeDir, cid.group, cid.module, cid.version, variantNames)
+        arts.each { art ->
             def key = cid.group + ':' + cid.module + ':' + cid.version + ':' + (art.classifier ?: '') + ':' + art.extension
             if (seen.add(key)) {
                 allArtifacts.add([group: cid.group, artifact: cid.module, version: cid.version,
                     classifier: art.classifier, extension: art.extension, scope: scopeName])
+            }
+        }
+        // Artifact-less components (BOMs via platform()/enforcedPlatform(), KMP roots)
+        // never enter allArtifacts above, so the downstream metadata pass — which only
+        // walks modules already in allArtifacts — never records their POM either, and
+        // offline resolution fails ("No cached version of com.google.firebase:firebase-bom
+        // available"). Record their cached metadata files directly.
+        if (arts.isEmpty()) {
+            ['pom', 'module'].each { mExt ->
+                if (cachedMetaFile(homeDir, cid.group, cid.module, cid.version, '.' + mExt) != null) {
+                    def key = cid.group + ':' + cid.module + ':' + cid.version + '::' + mExt
+                    if (seen.add(key)) {
+                        allArtifacts.add([group: cid.group, artifact: cid.module, version: cid.version,
+                            classifier: null, extension: mExt, scope: 'platform'])
+                    }
+                }
             }
         }
     }
@@ -237,8 +254,14 @@ gradle.projectsEvaluated {
     def collectTasks = rootProject.allprojects.collect { proj ->
         proj.task('flutter2nixDepsCollect') {
             doLast {
-                proj.configurations.names.toList().each { configName ->
-                    if (!configName.endsWith('RuntimeClasspath') && !configName.endsWith('CompileClasspath')) {
+                // Same comprehensive filter as the eager projectsEvaluated pass. Gradle 9
+                // refuses configuration resolution from listener callbacks ("attempted
+                // without an exclusive lock"), so under Gradle 9 this task context is the
+                // ONLY place these configs can resolve — a narrower filter here loses
+                // build-time deps like kotlinCompilerClasspath (kotlin-compiler-embeddable)
+                // and the plain compileClasspath/runtimeClasspath of JVM-only builds.
+                proj.configurations.names.toList().sort().each { configName ->
+                    if (configName.startsWith('_') || configName.startsWith('test') || configName.startsWith('Test')) {
                         return
                     }
                     try {
@@ -273,6 +296,18 @@ gradle.projectsEvaluated {
 
     rootProject.task('flutter2nixDeps') {
         dependsOn collectTasks
+        // Run each included build's flutter2nixDeps too (flutter_tools' helper build,
+        // composite-build plugins). The TAPI shim only invokes the root build's task,
+        // and Gradle 9's exclusive-lock rule kills the eager capture path, so task
+        // scheduling is the only reliable way to resolve included builds' configs.
+        // Each included build prints its own FLUTTER2NIX_DEPS line; the shim merges all.
+        try {
+            gradle.includedBuilds.each { ib ->
+                dependsOn ib.task(':flutter2nixDeps')
+            }
+        } catch (Exception e) {
+            System.err.println("FLUTTER2NIX_CONFIG_SKIP: included-build capture wiring failed: ${e.message}")
+        }
         doLast {
             // Capture .pom and .module metadata files for every resolved module version.
             // resolvedArtifacts only yields JARs/AARs; Gradle fetches POMs internally as

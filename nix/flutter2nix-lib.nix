@@ -212,6 +212,8 @@ let
   #   lockFile        — flutter2nix lockfile (must have android.nodes and/or ios.nodes)
   #   platforms       — list of platforms to build (default: ["android" "ios"])
   #   androidSdk      — Android SDK (required for Android builds, default: null)
+  #   gradlePackage   — Gradle for Android builds; must match the wrapper version
+  #                     the lockfile was captured with (default: pkgs.gradle)
   #   signing         — null or signing config for iOS (passed to buildFlutterIOSApp)
   #   exportOptions   — path to ExportOptions.plist (passed to buildFlutterIOSApp)
   #   ...             — other parameters passed through to the platform builders
@@ -253,6 +255,7 @@ let
       androidDrv = androidLib.buildFlutterAndroidApp (passThrough // {
         inherit pkgs name src lockFile androidSdk;
         jdk = args.jdk or pkgs.jdk17;
+        gradlePackage = args.gradlePackage or pkgs.gradle;
         gradleFlags = args.gradleFlags or [];
       });
 

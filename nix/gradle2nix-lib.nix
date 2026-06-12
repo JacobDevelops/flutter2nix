@@ -175,10 +175,16 @@ let
 
   # Returns an attrset of build helpers: mavenRepo, initScript, buildInputs,
   # and baseGradleFlags. Compose these into your own stdenv.mkDerivation.
+  # gradlePackage must match the Gradle wrapper version the lockfile was captured
+  # with: Gradle-version-coupled artifacts (e.g. the kotlin-dsl plugin requested by
+  # flutter_tools' helper build) are locked at the version the lock-time Gradle
+  # implies, and a different build-time Gradle requests versions the offline repo
+  # doesn't have.
   buildGradleProject =
     { pkgs
     , lockFile
     , jdk ? pkgs.jdk17
+    , gradlePackage ? pkgs.gradle
     , ...
     }:
     let
@@ -188,7 +194,7 @@ let
     in
     {
       inherit mavenRepo initScript;
-      buildInputs = [ jdk pkgs.gradle ];
+      buildInputs = [ jdk gradlePackage ];
       baseGradleFlags = [
         "--offline"
         "--no-daemon"
@@ -219,6 +225,7 @@ in
     , gradleTask ? "assembleRelease"
     , gradleFlags ? []
     , jdk ? pkgs.jdk17
+    , gradlePackage ? pkgs.gradle
     , androidSdk
     , ...
     }:
@@ -236,7 +243,7 @@ in
     in
     pkgs.stdenv.mkDerivation {
       inherit name src;
-      buildInputs = [ jdk pkgs.gradle androidSdk ];
+      buildInputs = [ jdk gradlePackage androidSdk ];
       ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
       ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
       JAVA_HOME = "${jdk}";
@@ -297,6 +304,8 @@ in
   #   gitHashes       — hashes for git-sourced pub dependencies (pub does not record them)
   #   flutterSdk      — Flutter SDK package (default: pkgs.flutter)
   #   jdk             — JDK package (default: pkgs.jdk17)
+  #   gradlePackage   — Gradle package; MUST match the wrapper version the lockfile
+  #                     was captured with (default: pkgs.gradle)
   #   androidSdk      — Android SDK from androidenv.composeAndroidPackages { }.androidsdk
   #   gradleFlags     — reserved for future use; extra Gradle flags (not passed to flutter CLI)
   buildFlutterAndroidApp =
@@ -308,12 +317,13 @@ in
     , gitHashes ? { }
     , flutterSdk ? pkgs.flutter
     , jdk ? pkgs.jdk17
+    , gradlePackage ? pkgs.gradle
     , androidSdk
     , gradleFlags ? []
     , ...
     }:
     let
-      gradle = buildGradleProject { inherit pkgs lockFile jdk; };
+      gradle = buildGradleProject { inherit pkgs lockFile jdk gradlePackage; };
 
       packageConfig = pubLib.pubPackageConfig {
         inherit pkgs name src pubspecLockFile gitHashes flutterSdk;
@@ -321,7 +331,7 @@ in
     in
     pkgs.stdenv.mkDerivation {
       inherit name src;
-      buildInputs = gradle.buildInputs ++ [ flutterSdk androidSdk pkgs.gradle_8 ];
+      buildInputs = gradle.buildInputs ++ [ flutterSdk androidSdk ];
       ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
       ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
       JAVA_HOME = "${jdk}";
@@ -338,7 +348,7 @@ in
         rm -f android/gradlew
         cat > android/gradlew << 'GRADLEW_EOF'
 #!/bin/sh
-exec ${pkgs.gradle_8}/bin/gradle --offline "$@"
+exec ${gradlePackage}/bin/gradle --offline "$@"
 GRADLEW_EOF
         chmod +x android/gradlew
         # Write correct local.properties so settings.gradle.kts can find flutter.sdk.
@@ -377,6 +387,31 @@ GRADLEW_EOF
         # the Gradle JVM instead. Placed here (not in the project's gradle.properties)
         # so it reaches every build in the composite, including flutter_tools.
         echo "kotlin.compiler.execution.strategy=in-process" >> "$GRADLE_USER_HOME/gradle.properties"
+        # flutter build --no-pub never regenerates GeneratedPluginRegistrant.java for
+        # release mode, so a debug-style registrant still references dev-dependency
+        # plugins (e.g. integration_test) that the Flutter Gradle plugin excludes from
+        # release variants — javac then fails with "package does not exist". Strip
+        # dev-dependency registrations, mirroring flutter's own release-mode regen.
+        if [ -f .flutter-plugins-dependencies ]; then
+          ${pkgs.python3}/bin/python3 - <<'STRIP_DEV_DEPS_EOF'
+        import json, re
+        deps = json.load(open(".flutter-plugins-dependencies"))
+        dev = [p["name"] for p in deps.get("plugins", {}).get("android", []) if p.get("dev_dependency")]
+        reg = "android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java"
+        try:
+            src = open(reg).read()
+        except FileNotFoundError:
+            dev, src = [], ""
+        for name in dev:
+            src = re.sub(
+                r"    try \{\n[^\n]*\n    \} catch \(Exception e\) \{\n[^\n]*Error registering plugin "
+                + re.escape(name) + r",[^\n]*\n    \}\n",
+                "", src)
+        if src:
+            open(reg, "w").write(src)
+            print(f"flutter2nix: stripped dev-dependency plugins from registrant: {dev}")
+        STRIP_DEV_DEPS_EOF
+        fi
         # NOTE: gradle.baseGradleFlags contains Gradle-specific flags (--no-daemon,
         # --no-configuration-cache, --init-script) that flutter build does NOT accept.
         # The init script is auto-loaded from $GRADLE_USER_HOME/init.d/. --no-pub skips

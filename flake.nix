@@ -48,7 +48,7 @@
         # Pre-built tapi-shim JAR copied from source tree and hash-locked for reproducibility.
         # To update: cd tapi-shim && gradle build && nix hash file tapi-shim/build/libs/tapi-shim.jar
         tapi-shim-jar = pkgs.runCommand "tapi-shim-jar" {
-          outputHash = "sha256-j1nGEED92U0QjDK+/YzqGm0gsyhxVEfIf2L4/eNYPLA=";
+          outputHash = "sha256-YmU5pJGhoskAlyEJn/SpFksjP670fCbucdNdynPLAm4=";
           outputHashMode = "flat";
         } ''
           cp ${./tapi-shim/build/libs/tapi-shim.jar} $out
