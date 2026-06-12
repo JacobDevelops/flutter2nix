@@ -62,6 +62,12 @@ let
         runHook preBuild
         export HOME="$NIX_BUILD_TOP"
 
+        # Flutter SDKs packaged from the official tarball keep their .git, and
+        # git refuses repos owned by another user ("dubious ownership") — which
+        # is every nix store path inside the build. Trust everything within this
+        # throwaway HOME; xcodebuild phase scripts inherit it via HOME=$HOME.
+        printf '[safe]\n\tdirectory = *\n' > "$HOME/.gitconfig"
+
         # Install the Nix-generated package config so `flutter build --no-pub`
         # resolves all Dart packages from the store without running pub. The
         # copied pubspec.lock keeps flutter_tools' freshness check consistent.
@@ -90,6 +96,43 @@ let
           printf 'TREE_SHAKE_ICONS=false\n'
           printf 'PACKAGE_CONFIG=.dart_tool/package_config.json\n'
         } > ios/Flutter/Generated.xcconfig
+
+        # CocoaPods' podhelper recreates ios/.symlinks/plugins/* from the plugin
+        # paths recorded in .flutter-plugins-dependencies — developer-machine
+        # absolute paths (pub cache, Flutter SDK) that dangle inside the build.
+        # Rewrite every plugin path to the Nix-store package root the generated
+        # package_config.json already resolves (covers hosted, git, and SDK
+        # packages like integration_test alike).
+        if [ -f .flutter-plugins-dependencies ]; then
+          chmod u+w .flutter-plugins-dependencies
+          ${pkgs.python3}/bin/python3 - <<'REWRITE_PLUGINS_EOF'
+        import json
+        from urllib.parse import urlparse, unquote
+        pkg_cfg = json.load(open(".dart_tool/package_config.json"))
+        roots = {}
+        for p in pkg_cfg["packages"]:
+            uri = p["rootUri"]
+            if uri.startswith("file://"):
+                roots[p["name"]] = unquote(urlparse(uri).path)
+        deps = json.load(open(".flutter-plugins-dependencies"))
+        missing = []
+        for platform_plugins in deps.get("plugins", {}).values():
+            for plugin in platform_plugins:
+                root = roots.get(plugin["name"])
+                if root is None:
+                    missing.append(plugin["name"])
+                    continue
+                plugin["path"] = root.rstrip("/") + "/"
+        if missing:
+            raise SystemExit(f"flutter2nix: plugins not in package_config.json: {missing}")
+        json.dump(deps, open(".flutter-plugins-dependencies", "w"), indent=2)
+        print("flutter2nix: rewrote plugin paths in .flutter-plugins-dependencies")
+        REWRITE_PLUGINS_EOF
+        else
+          echo "flutter2nix: WARNING — no .flutter-plugins-dependencies in src;" >&2
+          echo "  pod install will fail for plugin-using apps. Run 'flutter pub get'" >&2
+          echo "  in the project before building (the file is machine-generated)." >&2
+        fi
 
         # Make the hash-fetched pod sources visible to pod install (no-op for
         # pod-less apps; the sandbox tree is empty then).
@@ -144,6 +187,15 @@ let
         # Build: either unsigned (build) or signed (archive).
         # Common xcodebuild args are built once to avoid duplication; each branch appends
         # signing-specific flags and the final action arg.
+        # KNOWN LIMITATION (Xcode 26): asset catalogs containing app icon sets
+        # make actool/ibtoold query CoreSimulatorService for per-device icon
+        # rendering ("Failed to find a suitable device for IBSimDeviceTypeiPad3x").
+        # The service resolves its device set via the build user's passwd HOME
+        # (/var/empty) and nix build users cannot reach it — the build fails in
+        # CompileAssetCatalogVariant. No xcodebuild setting avoids the query
+        # (ENABLE_ON_DEMAND_RESOURCES=NO was tried; the thinned variant still
+        # compiles). Until solved, iOS apps with asset catalogs must build
+        # outside nix-build (the ios2nix CLI / fnx bench ios-build path).
         xcodebuild_args=(
           -workspace "ios/Runner.xcworkspace"
           -scheme "Runner"
