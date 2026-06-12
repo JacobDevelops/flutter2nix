@@ -402,6 +402,12 @@ GRADLEW_EOF
         # release variants — javac then fails with "package does not exist". Strip
         # dev-dependency registrations, mirroring flutter's own release-mode regen.
         ${pkgs.python3}/bin/python3 ${./strip-dev-deps.py}
+        # Gradle 9+ requires every included project's projectDirectory to be
+        # writable, but android plugin paths point into the read-only store.
+        # Copy android plugin packages to a writable dir and rewrite their
+        # entries in .flutter-plugins-dependencies.
+        ${pkgs.python3}/bin/python3 ${./relocate-plugins.py} \
+          .flutter-plugins-dependencies "$NIX_BUILD_TOP/plugin-copies"
         # Preflight: flutter_tools' PubDependencies artifact check runs an ONLINE
         # pub get for the tool itself (even under --no-pub) when the SDK ships no
         # resolved packages/flutter_tools/.dart_tool/package_config.json — raw
