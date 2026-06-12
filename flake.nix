@@ -12,12 +12,10 @@
 
   outputs = { self, nixpkgs, flake-utils, fenix }:
     # lib is top-level (not per-system) so consumers access flake.lib.buildGradleProject directly.
-    # buildIOSApp and buildFlutterApp remain unimplemented until Phase 3/4.
     {
-      lib = (import ./nix/gradle2nix-lib.nix { lib = nixpkgs.lib; }) // {
-        buildIOSApp = _: throw "buildIOSApp: not implemented — see Phase 3";
-        buildFlutterApp = _: throw "buildFlutterApp: not implemented — see Phase 4";
-      };
+      lib = (import ./nix/gradle2nix-lib.nix { lib = nixpkgs.lib; })
+        // (import ./nix/ios2nix-lib.nix { lib = nixpkgs.lib; })
+        // (import ./nix/flutter2nix-lib.nix { lib = nixpkgs.lib; });
     } // flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -62,6 +60,7 @@
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [ "-p" "gradle2nix" ];
+          cargoTestFlags = [ "-p" "gradle2nix" ];
           nativeBuildInputs = sharedNativeBuildInputs;
           buildInputs = sharedBuildInputs;
           # Place the JAR where include_bytes! expects it before cargo build runs.
@@ -76,6 +75,7 @@
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [ "-p" "flutter2nix" ];
+          cargoTestFlags = [ "-p" "flutter2nix" ];
           nativeBuildInputs = sharedNativeBuildInputs;
           buildInputs = sharedBuildInputs;
           # flutter2nix links the gradle2nix lib, which embeds the TAPI shim JAR.
@@ -83,6 +83,20 @@
             mkdir -p tapi-shim/build/libs
             cp ${tapi-shim-jar} tapi-shim/build/libs/tapi-shim.jar
           '';
+        };
+        ios2nix = rustPlatform.buildRustPackage {
+          pname = "ios2nix";
+          version = "0.1.0";
+          src = ./.;
+          cargoLock.lockFile = ./Cargo.lock;
+          cargoBuildFlags = [ "-p" "ios2nix" ];
+          # Lib tests only — the cli_tests integration suite needs real
+          # xcodebuild/signing material (it is #[ignore]-gated and run by
+          # fnx check); keychain tests self-skip when `security` is absent.
+          cargoTestFlags = [ "-p" "ios2nix" "--lib" ];
+          nativeBuildInputs = sharedNativeBuildInputs;
+          buildInputs = sharedBuildInputs;
+          meta.platforms = pkgs.lib.platforms.darwin;
         };
         # Init script over the committed fixture lockfile (its file:// URL pulls in
         # the offline Maven repo). Exposed for `fnx bench`, which drives offline
@@ -121,62 +135,58 @@
             lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
             gradleTask = "assembleRelease";
           };
-          # Full Flutter appbundle build.
-          buildFlutterAndroidApp-e2e = self.lib.buildFlutterAndroidApp {
+          # Full Flutter appbundle build (via buildFlutterApp dispatcher).
+          # Uses the unified lockfile (ios/flutter2nix.lock has both android+ios sections).
+          buildFlutterAndroidApp-e2e = (self.lib.buildFlutterApp {
             inherit pkgs androidSdk;
             name = "flutter-android-e2e";
             src = ./tests/fixtures/flutter/minimal-app;
-            lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
-          };
+            lockFile = ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock;
+          }).android;
         };
-        # Whole-suite aggregate: `nix build .#e2e` realises every entry in e2eTests.
-        # Empty no-op derivation on non-Linux or when the fixture lockfile is absent.
+        # iOS e2e: unsigned `flutter build ios` of the Flutter fixture against
+        # the unified flutter2nix.lock (android + ios sections — the iOS half
+        # of the composition pipeline). Signed export stays in the cargo-level
+        # signing e2e (needs local material). Darwin-only; same local-only
+        # tier as the android e2e.
+        iosE2eTests = pkgs.lib.optionalAttrs (
+          pkgs.stdenv.isDarwin
+          && builtins.pathExists ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock
+        ) {
+          # Build unsigned iOS app (via buildFlutterApp dispatcher).
+          buildFlutterIOSApp-e2e = (self.lib.buildFlutterApp {
+            inherit pkgs;
+            name = "flutter-ios-e2e";
+            src = ./tests/fixtures/flutter/minimal-app;
+            lockFile = ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock;
+          }).ios;
+        };
+        # Whole-suite aggregate: `nix build .#e2e` realises every e2e entry.
+        # Empty no-op derivation when the platform/fixture gates are closed.
         e2eAll = pkgs.linkFarm "e2e-all"
-          (pkgs.lib.mapAttrsToList (name: path: { inherit name path; }) e2eTests);
+          (pkgs.lib.mapAttrsToList (name: path: { inherit name path; })
+            (e2eTests // iosE2eTests));
       in
       {
-        devShells.default = pkgs.mkShell {
-          nativeBuildInputs = sharedNativeBuildInputs;
-          buildInputs = sharedBuildInputs ++ [
-            rust.toolchain
-            pkgs.nixpkgs-fmt
-            # fnx as a cargo-run wrapper: always built from the current worktree.
-            # The nix-built fnx package went stale whenever its source changed
-            # after shell entry (until the next direnv reload).
-            (pkgs.writeShellScriptBin "fnx" ''exec cargo run -q -p fnx -- "$@"'')
-            pkgs.flutter
-            pkgs.jdk17
-            pkgs.gradle_8
-            androidSdk
-          ];
-          shellHook = ''
-            export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:$LD_LIBRARY_PATH"
-            # The LD_LIBRARY_PATH above leaks Nix's OpenSSL (and its glibc 2.42)
-            # into every child process. When git/jj shell out to the system
-            # /usr/bin/ssh for pushes, ssh picks up the Nix libs and dies with
-            # `GLIBC_ABI_DT_X86_64_PLT not found`. Run ssh with a clean env so it
-            # uses the system glibc.
-            export GIT_SSH_COMMAND='env -u LD_LIBRARY_PATH ssh'
-            export ANDROID_HOME="${androidSdk}/libexec/android-sdk"
-            # Auto-write local.properties so Gradle can find the Flutter SDK and Android SDK.
-            # This file is gitignored and must point at the SDKs on the current machine.
-            local_props="tests/fixtures/flutter/minimal-app/android/local.properties"
-            mkdir -p "$(dirname "$local_props")"
-            printf "flutter.sdk=${pkgs.flutter}\nsdk.dir=${androidSdk}/libexec/android-sdk\n" > "$local_props"
-          '';
-        };
-
         packages = {
           inherit fnx tapi-shim-jar gradle2nix;
           flutter2nix = flutter2nix-cli;
           bench-init-script = benchGradle.initScript;
-          # iOS orchestration is macOS-only and unreleased (Phase 3).
-          ios2nix = pkgs.emptyDirectory;
           # Whole e2e suite — `nix build .#e2e` (or `fnx check`) runs every e2e test.
           e2e = e2eAll;
           default = self.packages.${system}.flutter2nix;
           # Each e2e test is also exposed individually (e.g. `.#buildFlutterAndroidApp-e2e`).
-        } // e2eTests;
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+          inherit ios2nix;
+        } // e2eTests // iosE2eTests;
+
+        # Inject binaries into pkgs for use in derivations (especially ios2nix for signing workflows).
+        pkgs = pkgs // {
+          inherit gradle2nix;
+          flutter2nix = flutter2nix-cli;
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+          inherit ios2nix;
+        };
 
         # Checks: use buildRustPackage so Cargo.lock deps are vendored (no network in sandbox)
         checks = {
@@ -191,7 +201,7 @@
               mkdir -p tapi-shim/build/libs
               cp ${tapi-shim-jar} tapi-shim/build/libs/tapi-shim.jar
             '';
-            buildPhase = "cargo check --workspace";
+            buildPhase = "cargo check --workspace --all-targets";
             installPhase = "mkdir -p $out";
             doCheck = false;
           };
@@ -206,7 +216,22 @@
               mkdir -p tapi-shim/build/libs
               cp ${tapi-shim-jar} tapi-shim/build/libs/tapi-shim.jar
             '';
-            buildPhase = "cargo clippy --workspace -- -D warnings";
+            buildPhase = "cargo clippy --workspace --all-targets -- -D warnings";
+            installPhase = "mkdir -p $out";
+            doCheck = false;
+          };
+          cargo-test = rustPlatform.buildRustPackage {
+            pname = "cargo-test";
+            version = "0.1.0";
+            src = ./.;
+            cargoLock.lockFile = ./Cargo.lock;
+            nativeBuildInputs = sharedNativeBuildInputs;
+            buildInputs = sharedBuildInputs;
+            preBuild = ''
+              mkdir -p tapi-shim/build/libs
+              cp ${tapi-shim-jar} tapi-shim/build/libs/tapi-shim.jar
+            '';
+            buildPhase = "cargo test --workspace";
             installPhase = "mkdir -p $out";
             doCheck = false;
           };
@@ -222,6 +247,38 @@
             pkgs = pkgs;
             lockFile = ./tests/fixtures/flutter/flutter-minimal.lock;
           }).mavenRepo;
+          # Guards every fixture lockfile against a bundletool POM-without-JAR. bundletool is a
+          # jar-packaged build-classpath artifact (AGP's FinalizeBundleTask resolves it at task
+          # time to sign the AAB). An offline lockfile that records a bundletool `.pom` without
+          # its `.jar` breaks `signReleaseBundle` (symptom: FinalizeBundleTask$BundleToolRunnable)
+          # whenever that version is selected. Such an entry is the fingerprint of a lockfile
+          # generated against a Gradle cache polluted by an unrelated build — regenerate with
+          # `gradle2nix lock` from a clean `--gradle-user-home`.
+          lockfile-bundletool-complete =
+            pkgs.runCommand "lockfile-bundletool-complete"
+              {
+                nativeBuildInputs = [ pkgs.jq ];
+                androidLock = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
+                iosLock = ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock;
+              } ''
+              fail=0
+              for lock in "$androidLock" "$iosLock"; do
+                urls=$(jq -r '(.nodes // .android.nodes // [])[].url | select(contains("/bundletool/"))' "$lock")
+                for ver in $(printf '%s\n' "$urls" | sed -nE 's#.*/bundletool/([^/]+)/.*#\1#p' | sort -u); do
+                  if printf '%s\n' "$urls" | grep -q "bundletool-$ver.pom" \
+                    && ! printf '%s\n' "$urls" | grep -q "bundletool-$ver.jar"; then
+                    echo "FAIL: $lock records bundletool $ver POM without its JAR" >&2
+                    fail=1
+                  fi
+                done
+              done
+              if [ "$fail" -ne 0 ]; then
+                echo "regenerate the lockfile with 'gradle2nix lock' from a clean --gradle-user-home" >&2
+                exit 1
+              fi
+              echo "ok: every bundletool version in every fixture lockfile has a matching JAR"
+              mkdir -p "$out"
+            '';
           # Type-only: verifies buildAndroidApp returns a derivation. Does not verify SDK content.
           buildAndroidApp-eval = let
             drv = self.lib.buildAndroidApp {
@@ -229,14 +286,7 @@
               name = "eval-test";
               src = ./tests/fixtures/gradle;
               lockFile = ./tests/fixtures/gradle/android-minimal.lock;
-              # Init script over the committed fixture lockfile (its file:// URL pulls in
-        # the offline Maven repo). Exposed for `fnx bench`, which drives offline
-        # Gradle builds outside the Nix sandbox. Same derivations the e2e checks use.
-        benchGradle = self.lib.buildGradleProject {
-          inherit pkgs;
-          lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
-        };
-        androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
+              androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
             };
           in assert drv ? drvPath;
              pkgs.runCommand "buildAndroidApp-eval" { } "touch $out";
@@ -247,14 +297,7 @@
               name = "flutter-android-eval-test";
               src = ./tests/fixtures/flutter/minimal-app;
               lockFile = ./tests/fixtures/flutter/flutter-minimal.lock;
-              # Init script over the committed fixture lockfile (its file:// URL pulls in
-        # the offline Maven repo). Exposed for `fnx bench`, which drives offline
-        # Gradle builds outside the Nix sandbox. Same derivations the e2e checks use.
-        benchGradle = self.lib.buildGradleProject {
-          inherit pkgs;
-          lockFile = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
-        };
-        androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
+              androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
             };
           in assert drv ? drvPath;
              pkgs.runCommand "buildFlutterAndroidApp-eval" { } "touch $out";
@@ -272,7 +315,53 @@
               grep -q 'file://${gradle.mavenRepo}' ${gradle.initScript}
               touch $out
             '';
+          # Pre-mortem #5 (Nix half): the git+url#rev packing must round-trip
+          # into exact fetchgit args. Pure eval — runs on all systems.
+          ios2nix-split-git-url-eval = let
+            result = self.lib.splitGitUrl
+              "git+https://github.com/jdg/MBProgressHUD.git#bca42b801100b2b3a4eda0ba8dd33d858c780b0d";
+          in
+          assert result.url == "https://github.com/jdg/MBProgressHUD.git";
+          assert result.rev == "bca42b801100b2b3a4eda0ba8dd33d858c780b0d";
+          pkgs.runCommand "ios2nix-split-git-url-eval" { } "touch $out";
+          # Verifies buildFlutterApp dispatcher works on both platforms.
+          # On Linux: android is present (androidSdk provided, isLinux=true).
+          # On Darwin: ios is present (isDarwin=true, android filtered).
+          buildFlutterApp-eval = let
+            result = self.lib.buildFlutterApp {
+              inherit pkgs;
+              name = "build-flutter-app-eval";
+              src = ./tests/fixtures/flutter/minimal-app;
+              lockFile = ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock;
+              androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
+            };
+            drv = result.android or result.ios;
+          in builtins.seq drv.drvPath
+             (pkgs.runCommand "buildFlutterApp-eval" { } "touch $out");
           default = pkgs.runCommand "flake-check-ok" { } "echo ok > $out";
+        # iOS checks are darwin-gated; ios-pods-sandbox-test realises a real
+        # fixed-output git fetch (analogue of android-maven-repo-test).
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+          ios-pods-sandbox-test = let
+            sandbox = self.lib.buildPodsSandbox pkgs (self.lib.readPods ./tests/fixtures/ios/minimal-pods.lock);
+          in
+          pkgs.runCommand "ios-pods-sandbox-test" { } ''
+            test -f ${sandbox}/pods/MBProgressHUD/1.2.0/MBProgressHUD.h
+            touch $out
+          '';
+          # Forces full instantiation (drvPath), not just attribute presence —
+          # `drv ? drvPath` is lazy and lets broken buildPhase interpolations
+          # (e.g. a nonexistent package reference) slip through evaluation.
+          buildIOSApp-eval = let
+            drv = self.lib.buildIOSApp {
+              inherit pkgs;
+              name = "eval-test";
+              src = ./crates/ios2nix/tests/fixtures/xcode-projects/native-app;
+              lockFile = ./tests/fixtures/ios/minimal-pods.lock;
+              exportOptions = ./crates/ios2nix/tests/fixtures/xcode-projects/native-app/ExportOptions.plist;
+            };
+          in builtins.seq drv.drvPath
+             (pkgs.runCommand "buildIOSApp-eval" { } "touch $out");
         };
       }
     );

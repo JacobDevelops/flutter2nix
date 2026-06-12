@@ -1,0 +1,17 @@
+# devenv.yaml — flutter2nix developer environment (replaces flake devShells + nix develop).
+#
+# nixpkgs is pinned to the SAME rev as flake.lock so devenv shares the flake's
+# binary cache (rust, flutter, gradle, android-sdk, … are cache hits, not rebuilds).
+# When you bump nixpkgs in flake.lock, bump the rev here too (or run `devenv update`).
+# fenix provides the stable Rust toolchain, matching the flake.nix rustPlatform build.
+inputs:
+  nixpkgs:
+    url: github:NixOS/nixpkgs/331800de5053fcebacf6813adb5db9c9dca22a0c
+  fenix:
+    url: github:nix-community/fenix/f6670530f53e69cc284f7aef818eb0f08fe81905
+    inputs:
+      nixpkgs:
+        follows: nixpkgs
+
+# Android SDK requires unfree packages.
+allowUnfree: true

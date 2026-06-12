@@ -38,9 +38,10 @@ pub async fn invoke_tapi_shim(config: TapiShimConfig) -> anyhow::Result<String> 
         let source = super::jar_source::select_tapi_shim_source()?;
         let jar = super::jar_source::extract_jar_to_temp(source)?;
 
-        let project_dir = config.gradle_project_dir.canonicalize().map_err(|e| {
-            anyhow::anyhow!("Gradle project directory not found: {}", e)
-        })?;
+        let project_dir = config
+            .gradle_project_dir
+            .canonicalize()
+            .map_err(|e| anyhow::anyhow!("Gradle project directory not found: {}", e))?;
 
         let mut c = Command::new("java");
         // TapiShim.kt passes --no-configuration-cache internally via .withArguments()
@@ -57,9 +58,9 @@ pub async fn invoke_tapi_shim(config: TapiShimConfig) -> anyhow::Result<String> 
     cmd.kill_on_drop(true);
 
     let duration = Duration::from_secs(config.timeout_secs);
-    let child = cmd.spawn().map_err(|e| {
-        anyhow::anyhow!("failed to spawn java: {} — is JVM installed?", e)
-    })?;
+    let child = cmd
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("failed to spawn java: {} — is JVM installed?", e))?;
 
     let output = timeout(duration, child.wait_with_output())
         .await

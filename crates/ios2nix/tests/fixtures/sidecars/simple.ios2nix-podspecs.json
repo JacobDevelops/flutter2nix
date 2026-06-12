@@ -1,0 +1,40 @@
+{
+  "pods": [
+    {
+      "name": "Flutter",
+      "version": "1.0.0",
+      "source": {
+        "type": "http",
+        "url": "https://storage.googleapis.com/flutter_infra_release/releases/stable/ios/Flutter-1.0.0.zip",
+        "sha256": "deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef"
+      }
+    },
+    {
+      "name": "firebase_core",
+      "version": "10.0.0",
+      "source": {
+        "type": "http",
+        "url": "https://github.com/firebase/firebase-ios-sdk/releases/download/10.0.0/firebase_core.zip",
+        "sha256": "cafebabe1234567890abcdefdeadbeefcafebabe1234567890abcdef12345678"
+      }
+    },
+    {
+      "name": "MBProgressHUD",
+      "version": "1.2.0",
+      "source": {
+        "type": "git",
+        "url": "https://github.com/jdg/MBProgressHUD.git",
+        "rev": "e7e8089a98be1c3eb464afde1e8b22a4f3ca3795",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    {
+      "name": "path_provider_foundation",
+      "version": "2.3.0",
+      "source": {
+        "type": "path",
+        "path": ".symlinks/plugins/path_provider_foundation/darwin"
+      }
+    }
+  ]
+}

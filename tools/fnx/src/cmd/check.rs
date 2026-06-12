@@ -58,6 +58,11 @@ pub fn run(args: CheckArgs) -> anyhow::Result<()> {
         if !status.success() {
             std::process::exit(status.code().unwrap_or(1));
         }
+
+        // iOS signing e2e: the `#[ignore]`-gated cli_tests need real signing
+        // material, supplied via the untracked .ios2nix-signing.env file — the
+        // same local-only tier as the Nix e2e suite above.
+        super::signing_e2e::run_if_configured(&repo_root)?;
     }
 
     Ok(())

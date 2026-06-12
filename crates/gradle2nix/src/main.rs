@@ -3,7 +3,10 @@ use gradle2nix::cli;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "gradle2nix", about = "Gradle/Maven dependency materialiser for Nix")]
+#[command(
+    name = "gradle2nix",
+    about = "Gradle/Maven dependency materialiser for Nix"
+)]
 struct Args {
     #[command(subcommand)]
     command: Option<Command>,
@@ -96,9 +99,9 @@ async fn main() -> anyhow::Result<()> {
 
     match args.command {
         Some(Command::Lock(lock_args)) => {
-            let repositories = lock_args.repositories.map(|repos| {
-                repos.split(',').map(|s| s.trim().to_string()).collect()
-            });
+            let repositories = lock_args
+                .repositories
+                .map(|repos| repos.split(',').map(|s| s.trim().to_string()).collect());
 
             cli::lock::run(cli::lock::LockCommand {
                 gradle_dir: lock_args.project_dir,
@@ -111,9 +114,9 @@ async fn main() -> anyhow::Result<()> {
             .await
         }
         Some(Command::Check(check_args)) => {
-            let repositories = check_args.repositories.map(|repos| {
-                repos.split(',').map(|s| s.trim().to_string()).collect()
-            });
+            let repositories = check_args
+                .repositories
+                .map(|repos| repos.split(',').map(|s| s.trim().to_string()).collect());
 
             cli::check::run(cli::check::CheckCommand {
                 gradle_dir: check_args.project_dir,

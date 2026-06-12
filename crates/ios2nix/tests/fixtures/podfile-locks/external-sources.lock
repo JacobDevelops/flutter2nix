@@ -1,0 +1,33 @@
+PODS:
+  - Flutter (1.0.0)
+  - MBProgressHUD (1.2.0)
+  - path_provider_foundation (2.3.0):
+    - Flutter
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - MBProgressHUD (from `https://github.com/jdg/MBProgressHUD.git`, tag `1.2.0`)
+  - path_provider_foundation (from `.symlinks/plugins/path_provider_foundation/darwin`)
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  MBProgressHUD:
+    :git: https://github.com/jdg/MBProgressHUD.git
+    :tag: "1.2.0"
+  path_provider_foundation:
+    :path: ".symlinks/plugins/path_provider_foundation/darwin"
+
+CHECKOUT OPTIONS:
+  MBProgressHUD:
+    :git: https://github.com/jdg/MBProgressHUD.git
+    :tag: "1.2.0"
+
+SPEC CHECKSUMS:
+  Flutter: deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef
+  MBProgressHUD: 1111111111111111111111111111111111111111111111111111111111111111
+  path_provider_foundation: 5555555555555555555555555555555555555555555555555555555555555555
+
+PODFILE CHECKSUM: 2222222222222222222222222222222222222222
+
+COCOAPODS: 1.16.2

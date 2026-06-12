@@ -11,6 +11,7 @@
 result
 result-*
 .direnv/
+.devenv/
 
 # IDEs
 .vscode/
@@ -31,6 +32,10 @@ tapi-shim/build/**
 !tapi-shim/build/libs/tapi-shim.jar
 **/fixtures/**/.gradle
 
+# CocoaPods state in iOS fixtures — pod install regenerates it from the
+# committed Podfile.lock; only Podfile/Podfile.lock/workspace are tracked.
+**/fixtures/**/Pods/
+
 # Flutter/Dart/Gradle fixture build state
 **/fixtures/**/.dart_tool
 tests/fixtures/flutter/*/build/
@@ -38,6 +43,11 @@ tests/fixtures/flutter/*/android/build/
 tests/fixtures/flutter/*/android/app/build/
 tests/fixtures/gradle/*/build/
 tests/fixtures/gradle/*/app/build/
+
+# Local iOS signing material for the fnx signing e2e (paths + IDs; the .p12
+# password is referenced via IOS2NIX_P12_PASSWORD_FILE). Machine-specific,
+# never committed.
+.ios2nix-signing.env
 
 # OMC
 .omc/notepad.md

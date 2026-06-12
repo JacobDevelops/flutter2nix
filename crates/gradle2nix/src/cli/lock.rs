@@ -2,7 +2,11 @@ use anyhow::Context;
 use nix_core::dep::{DependencyGraph, LockedDependency};
 use std::path::{Path, PathBuf};
 
-use crate::maven::{artifact_repo_url, extract_pom_bom_imports, extract_pom_direct_deps, extract_pom_parent, fetch_pom_content, resolve_artifact_sha256, resolve_artifacts_batch, MavenCoordinate, MavenResolverConfig};
+use crate::maven::{
+    artifact_repo_url, extract_pom_bom_imports, extract_pom_direct_deps, extract_pom_parent,
+    fetch_pom_content, resolve_artifact_sha256, resolve_artifacts_batch, MavenCoordinate,
+    MavenResolverConfig,
+};
 use crate::resolve_cache::ResolveCache;
 use crate::tapi::model::parse_tapi_output;
 use crate::tapi::shim::{invoke_tapi_shim, TapiShimConfig};
@@ -39,9 +43,10 @@ pub async fn build_dependency_graph(
     // 1. Use sidecar for test injection if present
     let sidecar = gradle_dir.join(".gradle2nix-tapi-output.json");
     let tapi_json_override = if sidecar.exists() {
-        Some(std::fs::read_to_string(&sidecar).with_context(|| {
-            format!("reading TAPI sidecar '{}'", sidecar.display())
-        })?)
+        Some(
+            std::fs::read_to_string(&sidecar)
+                .with_context(|| format!("reading TAPI sidecar '{}'", sidecar.display()))?,
+        )
     } else {
         None
     };
@@ -67,13 +72,22 @@ pub async fn build_dependency_graph(
         .iter()
         .map(|art| {
             let s = match &art.classifier {
-                Some(c) => format!("{}:{}:{}:{}@{}", art.group, art.artifact, art.version, c, art.extension),
-                None => format!("{}:{}:{}@{}", art.group, art.artifact, art.version, art.extension),
+                Some(c) => format!(
+                    "{}:{}:{}:{}@{}",
+                    art.group, art.artifact, art.version, c, art.extension
+                ),
+                None => format!(
+                    "{}:{}:{}@{}",
+                    art.group, art.artifact, art.version, art.extension
+                ),
             };
             MavenCoordinate::parse(&s)
         })
         .collect::<anyhow::Result<_>>()?;
-    eprintln!("gradle2nix: TAPI captured {} artifacts, resolving SHA-256s...", coords.len());
+    eprintln!(
+        "gradle2nix: TAPI captured {} artifacts, resolving SHA-256s...",
+        coords.len()
+    );
 
     // 5. Resolve SHA-256 for each coordinate
     // Three default repos cover the whole Android/Flutter ecosystem:
@@ -119,7 +133,10 @@ pub async fn build_dependency_graph(
         }
     }
     let mut resolved = batch_result?;
-    eprintln!("gradle2nix: resolved {} artifacts, running discovery phases...", resolved.len());
+    eprintln!(
+        "gradle2nix: resolved {} artifacts, running discovery phases...",
+        resolved.len()
+    );
 
     // 6. Discover declared-version POMs first.
     // Gradle's offline resolution reads every POM that a resolved artifact transitively references
@@ -129,13 +146,19 @@ pub async fn build_dependency_graph(
     // the declared-version POM for any artifact that already exists in the local Gradle cache.
     // Must run BEFORE discover_parent_poms so parent/BOM chains of newly-added POMs are followed.
     resolved = discover_declared_dep_poms(resolved, &resolver_config).await?;
-    eprintln!("gradle2nix: declared-dep POMs done ({} total), discovering parent POMs...", resolved.len());
+    eprintln!(
+        "gradle2nix: declared-dep POMs done ({} total), discovering parent POMs...",
+        resolved.len()
+    );
 
     // 6b. Discover transitive parent POMs + BOM imports.
     // Now sees the full set of POMs including declared-version additions above, so it can
     // follow parent chains like commons-io:2.13.0 → commons-parent:58 → junit-bom:5.9.3.
     resolved = discover_parent_poms(resolved, &resolver_config).await?;
-    eprintln!("gradle2nix: parent POMs done ({} total), scanning Gradle cache for missing versions...", resolved.len());
+    eprintln!(
+        "gradle2nix: parent POMs done ({} total), scanning Gradle cache for missing versions...",
+        resolved.len()
+    );
 
     // 6b2. Discover all cached versions of known artifacts.
     // Some artifacts (e.g. kotlin-stdlib-common) are metadata-only (no JAR) — the TAPI shim
@@ -143,7 +166,10 @@ pub async fn build_dependency_graph(
     // declared version to a higher one that only has .pom/.module in the Gradle cache.
     // Add .pom for ALL Gradle-cached versions of every group:artifact already in the lockfile.
     resolved = discover_all_cached_versions(resolved, &resolver_config).await?;
-    eprintln!("gradle2nix: cached-version scan done ({} total), resolving KMP base artifacts...", resolved.len());
+    eprintln!(
+        "gradle2nix: cached-version scan done ({} total), resolving KMP base artifacts...",
+        resolved.len()
+    );
 
     // 6c. Discover Kotlin Multiplatform base artifacts.
     // Platform-specific JARs (e.g. kotlinx-serialization-json-jvm:1.4.0) are captured by the shim,
@@ -151,7 +177,10 @@ pub async fn build_dependency_graph(
     // (kotlinx-serialization-json:1.4.0) whose .pom/.module files live in a separate cache dir.
     // Without the root metadata, offline resolution fails with "Could not resolve".
     resolved = discover_kmp_base_artifacts(resolved, &resolver_config).await?;
-    eprintln!("gradle2nix: KMP base artifacts done ({} total), resolving AGP aapt2 binary...", resolved.len());
+    eprintln!(
+        "gradle2nix: KMP base artifacts done ({} total), resolving AGP aapt2 binary...",
+        resolved.len()
+    );
 
     // 6d. Discover AGP's aapt2 native binary.
     // AGP fetches `com.android.tools.build:aapt2:{version}:{os}@jar` at task execution time
@@ -159,7 +188,10 @@ pub async fn build_dependency_graph(
     // aapt2-proto is always co-released at the same version, so its presence signals which
     // aapt2 binary version to resolve for the linux Nix build host.
     resolved = discover_agp_aapt2_artifacts(resolved, &resolver_config).await?;
-    eprintln!("gradle2nix: discovery complete ({} total artifacts), building lockfile...", resolved.len());
+    eprintln!(
+        "gradle2nix: discovery complete ({} total artifacts), building lockfile...",
+        resolved.len()
+    );
 
     if let Some(cache) = &resolver_config.resolve_cache {
         if let Err(e) = cache.persist() {
@@ -172,17 +204,19 @@ pub async fn build_dependency_graph(
         .into_iter()
         .map(|(coord, sha256)| {
             let repo_url = artifact_repo_url(&coord);
-            let url = format!("{}/{}", repo_url.trim_end_matches('/'), coord.to_artifact_path());
-            LockedDependency::new(
-                coord_to_name(&coord),
-                coord.version.clone(),
-                url,
-                sha256,
-            )
+            let url = format!(
+                "{}/{}",
+                repo_url.trim_end_matches('/'),
+                coord.to_artifact_path()
+            );
+            LockedDependency::new(coord_to_name(&coord), coord.version.clone(), url, sha256)
         })
         .collect();
 
-    Ok(DependencyGraph { format_version: "1".to_string(), nodes })
+    Ok(DependencyGraph {
+        format_version: "1".to_string(),
+        nodes,
+    })
 }
 
 /// Flow: TAPI shim → parse JSON → convert to MavenCoordinates → resolve SHA-256 → build DependencyGraph → write lockfile
@@ -208,7 +242,7 @@ pub async fn run(cmd: LockCommand) -> anyhow::Result<()> {
         .output
         .unwrap_or_else(|| cmd.gradle_dir.join("gradle2nix.lock"));
 
-    crate::lockfile::write_lockfile(&output_path, &graph)
+    nix_core::lockfile::write_lockfile(&output_path, &graph)
         .with_context(|| format!("writing lockfile to '{}'", output_path.display()))?;
 
     println!("Wrote lockfile: {}", output_path.display());
@@ -256,7 +290,11 @@ async fn discover_agp_aapt2_artifacts(
                 extension: "jar".to_string(),
             };
             let key = format!("{}:{}:{}:linux:jar", coord.group, coord.artifact, version);
-            if seen.contains(&key) { None } else { Some(coord) }
+            if seen.contains(&key) {
+                None
+            } else {
+                Some(coord)
+            }
         })
         .collect();
 
@@ -446,7 +484,11 @@ async fn discover_declared_dep_poms(
                 match resolve_artifact_sha256(&coord, config).await {
                     Ok(sha256) => Some((coord, sha256)),
                     Err(e) => {
-                        log::debug!("declared dep POM not resolvable {}: {:#}", coord.to_artifact_path(), e);
+                        log::debug!(
+                            "declared dep POM not resolvable {}: {:#}",
+                            coord.to_artifact_path(),
+                            e
+                        );
                         None
                     }
                 }
@@ -475,12 +517,22 @@ async fn discover_kmp_base_artifacts(
     config: &MavenResolverConfig,
 ) -> anyhow::Result<Vec<(MavenCoordinate, String)>> {
     const KMP_SUFFIXES: &[&str] = &[
-        "-jvm", "-js", "-android", "-native",
-        "-linuxX64", "-linuxArm64",
-        "-macosX64", "-macosArm64",
-        "-iosArm64", "-iosX64", "-iosSimulatorArm64",
-        "-watchosX64", "-watchosArm32", "-watchosArm64",
-        "-tvosX64", "-tvosArm64",
+        "-jvm",
+        "-js",
+        "-android",
+        "-native",
+        "-linuxX64",
+        "-linuxArm64",
+        "-macosX64",
+        "-macosArm64",
+        "-iosArm64",
+        "-iosX64",
+        "-iosSimulatorArm64",
+        "-watchosX64",
+        "-watchosArm32",
+        "-watchosArm64",
+        "-tvosX64",
+        "-tvosArm64",
         "-mingwX64",
     ];
 
@@ -496,7 +548,12 @@ async fn discover_kmp_base_artifacts(
                 for ext in &["pom", "module"] {
                     let key = format!("{}:{}:{}:{}", coord.group, base_name, coord.version, ext);
                     if seen.insert(key) {
-                        candidates.push((coord.group.clone(), base_name.to_string(), coord.version.clone(), ext.to_string()));
+                        candidates.push((
+                            coord.group.clone(),
+                            base_name.to_string(),
+                            coord.version.clone(),
+                            ext.to_string(),
+                        ));
                     }
                 }
             }
@@ -506,7 +563,13 @@ async fn discover_kmp_base_artifacts(
     // Resolve candidates concurrently, ignoring failures (not all stripped names are real artifacts).
     let mut set = tokio::task::JoinSet::new();
     for (group, artifact, version, ext) in candidates {
-        let coord = MavenCoordinate { group, artifact, version, classifier: None, extension: ext };
+        let coord = MavenCoordinate {
+            group,
+            artifact,
+            version,
+            classifier: None,
+            extension: ext,
+        };
         let config = config.clone();
         set.spawn(async move {
             match resolve_artifact_sha256(&coord, &config).await {
@@ -587,7 +650,11 @@ async fn discover_parent_poms(
                 match resolve_artifact_sha256(&coord, config).await {
                     Ok(sha256) => Some((coord, sha256)),
                     Err(e) => {
-                        log::warn!("Could not resolve POM dep {}: {:#}", coord.to_artifact_path(), e);
+                        log::warn!(
+                            "Could not resolve POM dep {}: {:#}",
+                            coord.to_artifact_path(),
+                            e
+                        );
                         None
                     }
                 }
@@ -606,4 +673,3 @@ async fn discover_parent_poms(
 
     Ok(resolved)
 }
-

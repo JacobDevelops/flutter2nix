@@ -26,9 +26,7 @@ async fn test_e2e_real_android() {
 
     let t_lock = std::time::Instant::now();
     let result = flutter2nix::cli::lock::run(flutter2nix::cli::lock::LockCommand {
-        project_dir: PathBuf::from(
-            "tests/fixtures/flutter-projects/real-android-flutter",
-        ),
+        project_dir: PathBuf::from("tests/fixtures/flutter-projects/real-android-flutter"),
         output: Some(tmp.path().to_path_buf()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: None,
@@ -51,13 +49,23 @@ async fn test_e2e_real_android() {
     let android = lock.android.expect("android section must be present");
     assert!(!android.nodes.is_empty(), "android nodes must not be empty");
 
-    let has_junit = android.nodes.iter().any(|n| n.name.starts_with("junit:junit:"));
-    assert!(has_junit, "junit must appear in android nodes — got: {:?}", android.nodes);
+    let has_junit = android
+        .nodes
+        .iter()
+        .any(|n| n.name.starts_with("junit:junit:"));
+    assert!(
+        has_junit,
+        "junit must appear in android nodes — got: {:?}",
+        android.nodes
+    );
 
     for node in &android.nodes {
         let sha = node.sha256_hex();
         assert_eq!(sha.len(), 64, "sha256 must be 64 hex chars, got: {sha}");
-        assert!(sha.chars().all(|c| c.is_ascii_hexdigit()), "sha256 must be hex, got: {sha}");
+        assert!(
+            sha.chars().all(|c| c.is_ascii_hexdigit()),
+            "sha256 must be hex, got: {sha}"
+        );
     }
 
     assert!(
@@ -71,9 +79,7 @@ async fn test_lock_simple_android_flutter() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
 
     flutter2nix::cli::lock::run(flutter2nix::cli::lock::LockCommand {
-        project_dir: PathBuf::from(
-            "tests/fixtures/flutter-projects/simple-android-flutter",
-        ),
+        project_dir: PathBuf::from("tests/fixtures/flutter-projects/simple-android-flutter"),
         output: Some(tmp.path().to_path_buf()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: Some(PathBuf::from(
@@ -94,7 +100,10 @@ async fn test_lock_simple_android_flutter() {
         .unwrap(),
     )
     .unwrap();
-    assert_eq!(written, expected, "lock output must match fixture flutter2nix.lock");
+    assert_eq!(
+        written, expected,
+        "lock output must match fixture flutter2nix.lock"
+    );
 }
 
 #[tokio::test]
@@ -102,9 +111,7 @@ async fn test_lock_android_section_present() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
 
     flutter2nix::cli::lock::run(flutter2nix::cli::lock::LockCommand {
-        project_dir: PathBuf::from(
-            "tests/fixtures/flutter-projects/simple-android-flutter",
-        ),
+        project_dir: PathBuf::from("tests/fixtures/flutter-projects/simple-android-flutter"),
         output: Some(tmp.path().to_path_buf()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: Some(PathBuf::from(
@@ -118,7 +125,10 @@ async fn test_lock_android_section_present() {
 
     let lock: FlutterLockfile =
         read_lockfile(tmp.path()).expect("written lockfile must be readable");
-    assert!(lock.android.is_some(), "android section must be present for Android project");
+    assert!(
+        lock.android.is_some(),
+        "android section must be present for Android project"
+    );
     let android = lock.android.unwrap();
     assert!(!android.nodes.is_empty(), "android nodes must not be empty");
     assert!(
@@ -132,9 +142,7 @@ async fn test_lock_ios_absent_for_android_only_project() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
 
     flutter2nix::cli::lock::run(flutter2nix::cli::lock::LockCommand {
-        project_dir: PathBuf::from(
-            "tests/fixtures/flutter-projects/simple-android-flutter",
-        ),
+        project_dir: PathBuf::from("tests/fixtures/flutter-projects/simple-android-flutter"),
         output: Some(tmp.path().to_path_buf()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: Some(PathBuf::from(
@@ -160,9 +168,7 @@ async fn test_flutter_lock_android_only() {
     let lockfile_path = tmp.path().join("flutter2nix.lock");
 
     flutter2nix::cli::lock::run(flutter2nix::cli::lock::LockCommand {
-        project_dir: PathBuf::from(
-            "tests/fixtures/flutter-projects/simple-android-flutter",
-        ),
+        project_dir: PathBuf::from("tests/fixtures/flutter-projects/simple-android-flutter"),
         output: Some(lockfile_path.clone()),
         repositories: Some(vec!["https://repo.maven.apache.org/maven2/".to_string()]),
         gradle_cache_dir: Some(PathBuf::from(
@@ -204,7 +210,10 @@ async fn test_lock_fails_without_pubspec() {
     })
     .await;
 
-    assert!(result.is_err(), "lock must fail when pubspec.yaml is absent");
+    assert!(
+        result.is_err(),
+        "lock must fail when pubspec.yaml is absent"
+    );
     let msg = result.unwrap_err().to_string();
     assert!(
         msg.contains("pubspec.yaml"),
@@ -225,7 +234,11 @@ async fn test_check_fresh_lockfile() {
         timeout_secs: 60,
     })
     .await;
-    assert!(result.is_ok(), "check must pass for a fresh lockfile: {:?}", result.unwrap_err());
+    assert!(
+        result.is_ok(),
+        "check must pass for a fresh lockfile: {:?}",
+        result.unwrap_err()
+    );
 }
 
 #[tokio::test]
@@ -246,5 +259,79 @@ async fn test_check_stale_lockfile() {
     })
     .await
     .expect_err("check must fail for a stale lockfile");
-    assert!(err.to_string().contains("stale"), "error must say stale, got: {err}");
+    assert!(
+        err.to_string().contains("stale"),
+        "error must say stale, got: {err}"
+    );
+}
+
+/// Unified composition: a project with BOTH an android/ dir (TAPI sidecar) and
+/// an ios/ dir (Podfile.lock + ios2nix sidecar) locks into `{ android, ios }`.
+#[tokio::test]
+async fn test_lock_android_and_ios_sections() {
+    let project = tempfile::TempDir::new().unwrap();
+    let fixture = PathBuf::from("tests/fixtures/flutter-projects/simple-android-flutter");
+
+    std::fs::copy(
+        fixture.join("pubspec.yaml"),
+        project.path().join("pubspec.yaml"),
+    )
+    .unwrap();
+    std::fs::create_dir(project.path().join("android")).unwrap();
+    std::fs::copy(
+        fixture.join("android/.gradle2nix-tapi-output.json"),
+        project.path().join("android/.gradle2nix-tapi-output.json"),
+    )
+    .unwrap();
+    std::fs::copy(
+        fixture.join("android/build.gradle.kts"),
+        project.path().join("android/build.gradle.kts"),
+    )
+    .unwrap();
+
+    let ios2nix_fixtures = PathBuf::from("../ios2nix/tests/fixtures");
+    std::fs::create_dir(project.path().join("ios")).unwrap();
+    std::fs::copy(
+        ios2nix_fixtures.join("podfile-locks/simple-2-pods.lock"),
+        project.path().join("ios/Podfile.lock"),
+    )
+    .unwrap();
+    std::fs::copy(
+        ios2nix_fixtures.join("sidecars/simple.ios2nix-podspecs.json"),
+        project.path().join("ios/.ios2nix-podspecs.json"),
+    )
+    .unwrap();
+
+    let lock = flutter2nix::cli::lock::generate_lockfile(
+        project.path(),
+        &["https://repo.maven.apache.org/maven2/".to_string()],
+        Some(std::path::Path::new(
+            "../gradle2nix/tests/fixtures/maven-repos/maven-central-stub",
+        )),
+        None,
+        60,
+    )
+    .await
+    .unwrap();
+
+    let android = lock
+        .android
+        .as_ref()
+        .expect("android section must be present");
+    assert!(!android.nodes.is_empty(), "android nodes must not be empty");
+
+    let ios = lock.ios.as_ref().expect("ios section must be present");
+    assert_eq!(
+        ios.nodes.len(),
+        3,
+        "ios nodes: 2 http + 1 git, path pod excluded"
+    );
+    assert!(ios
+        .nodes
+        .iter()
+        .all(|n| n.name != "path_provider_foundation"));
+
+    let json = serde_json::to_string(&lock).unwrap();
+    assert!(json.contains("\"android\""));
+    assert!(json.contains("\"ios\""));
 }

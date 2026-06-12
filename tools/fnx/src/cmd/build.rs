@@ -18,7 +18,9 @@ pub fn run(args: BuildArgs) -> anyhow::Result<()> {
     let repo_root = nixutil::find_repo_root()?;
 
     let mut cmd = Command::new("nix");
-    cmd.arg("build").arg("--print-build-logs").current_dir(&repo_root);
+    cmd.arg("build")
+        .arg("--print-build-logs")
+        .current_dir(&repo_root);
 
     if let Some(ref target) = args.target {
         cmd.arg(format!(".#{target}"));

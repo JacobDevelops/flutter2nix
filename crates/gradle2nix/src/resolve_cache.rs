@@ -88,8 +88,12 @@ impl ResolveCache {
 
     pub fn store_file_sha256(&self, path: &Path, hex: &str) {
         let Some(key) = path.to_str() else { return };
-        let Ok(meta) = std::fs::metadata(path) else { return };
-        let Some(mtime) = file_mtime_secs(&meta) else { return };
+        let Ok(meta) = std::fs::metadata(path) else {
+            return;
+        };
+        let Some(mtime) = file_mtime_secs(&meta) else {
+            return;
+        };
         self.data
             .lock()
             .unwrap()

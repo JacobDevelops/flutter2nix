@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
 use crate::maven::MavenCoordinate;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 
 const SUPPORTED_GRADLE_MAJOR_VERSIONS: &[u64] = &[7, 8, 9];
 
@@ -32,7 +32,11 @@ pub fn parse_tapi_output(raw: &str) -> anyhow::Result<TapiOutput> {
             .into_iter()
             .collect();
         configurations.sort();
-        let output = TapiOutput { version, artifacts, configurations };
+        let output = TapiOutput {
+            version,
+            artifacts,
+            configurations,
+        };
         validate_tapi_output(&output)?;
         return Ok(output);
     }
@@ -69,9 +73,8 @@ pub fn validate_tapi_output(output: &TapiOutput) -> anyhow::Result<()> {
 /// - Buildscript block + 0 coords → Err with descriptive message
 pub fn parse_buildscript_deps(build_gradle_content: &str) -> anyhow::Result<Vec<MavenCoordinate>> {
     // Check if buildscript block exists at all
-    let buildscript_pattern = Regex::new(r"buildscript\s*\{").map_err(|e| {
-        anyhow::anyhow!("failed to compile buildscript regex: {}", e)
-    })?;
+    let buildscript_pattern = Regex::new(r"buildscript\s*\{")
+        .map_err(|e| anyhow::anyhow!("failed to compile buildscript regex: {}", e))?;
 
     if !buildscript_pattern.is_match(build_gradle_content) {
         // No buildscript block at all — return empty silently
@@ -80,9 +83,8 @@ pub fn parse_buildscript_deps(build_gradle_content: &str) -> anyhow::Result<Vec<
 
     // Buildscript block exists; now extract classpath dependencies
     // Pattern: classpath("group:artifact:version") or classpath('group:artifact:version')
-    let classpath_pattern = Regex::new(r#"classpath\s*\(\s*["']([^"']+)["']\s*\)"#).map_err(|e| {
-        anyhow::anyhow!("failed to compile classpath regex: {}", e)
-    })?;
+    let classpath_pattern = Regex::new(r#"classpath\s*\(\s*["']([^"']+)["']\s*\)"#)
+        .map_err(|e| anyhow::anyhow!("failed to compile classpath regex: {}", e))?;
 
     let coords: Vec<MavenCoordinate> = classpath_pattern
         .captures_iter(build_gradle_content)

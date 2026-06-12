@@ -1,0 +1,20 @@
+# LOKE-pwa-shell-tier fixture: minimal native app wrapping the same
+# Firebase/Messaging dependency tree as a real white-label PWA wrapper.
+platform :ios, '15.0'
+
+target 'PwaWrapperApp' do
+  use_frameworks!
+
+  pod 'Firebase/Messaging'
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+      config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ""
+      config.build_settings['CODE_SIGNING_REQUIRED'] = "NO"
+      config.build_settings['CODE_SIGNING_ALLOWED'] = "NO"
+    end
+  end
+end

@@ -34,7 +34,10 @@ async fn test_tapi_invocation_jvm_not_found() {
     })
     .await;
 
-    assert!(result.is_err(), "expected error for missing project dir, got Ok");
+    assert!(
+        result.is_err(),
+        "expected error for missing project dir, got Ok"
+    );
     let msg = result.unwrap_err().to_string();
     assert!(
         msg.contains("not found") || msg.contains("java") || msg.contains("No such file"),
@@ -59,7 +62,10 @@ async fn test_tapi_invocation_includes_no_configuration_cache_flag() {
     .await;
 
     // With tapi_json_override set, the function bypasses Java and returns the override directly.
-    assert!(result.is_ok(), "tapi_json_override should bypass JVM and return the provided JSON");
+    assert!(
+        result.is_ok(),
+        "tapi_json_override should bypass JVM and return the provided JSON"
+    );
     assert_eq!(result.unwrap(), minimal_tapi_json);
 }
 
@@ -76,7 +82,11 @@ fn test_sentinel_parsing_clean_output() {
 fn test_sentinel_parsing_with_gradle_noise() {
     let stdout = "[WARN] Deprecated feature used\n[INFO] Configuring project :app\nFLUTTER2NIX_VERSION:8.4.0\n[INFO] Task :flutter2nixDeps executed\nFLUTTER2NIX_DEPS:[{\"group\":\"org.example\",\"artifact\":\"lib\",\"version\":\"2.0\",\"classifier\":null,\"extension\":\"jar\",\"scope\":\"runtimeClasspath\"}]\n[INFO] BUILD SUCCESSFUL in 5s";
     let artifacts = try_parse_sentinel(stdout).expect("expected Some despite Gradle noise");
-    assert_eq!(artifacts.len(), 1, "expected 1 artifact extracted from noisy output");
+    assert_eq!(
+        artifacts.len(),
+        1,
+        "expected 1 artifact extracted from noisy output"
+    );
     assert_eq!(artifacts[0].group, "org.example");
 }
 
@@ -95,5 +105,8 @@ fn test_sentinel_parsing_invalid_json() {
 fn test_sentinel_parsing_missing_sentinel() {
     let stdout = "[INFO] Build output\n[WARN] Some warning\nBUILD SUCCESSFUL in 3s";
     let result = try_parse_sentinel(stdout);
-    assert!(result.is_none(), "no FLUTTER2NIX_DEPS sentinel should return None to trigger fallback");
+    assert!(
+        result.is_none(),
+        "no FLUTTER2NIX_DEPS sentinel should return None to trigger fallback"
+    );
 }
