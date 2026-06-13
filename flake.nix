@@ -420,6 +420,24 @@
               fi
               touch $out
             '';
+          # Dev-shell wiring: offlineGradleDevHook returns a shell-hook string a
+          # consumer drops into devenv enterShell / mkShell shellHook so that
+          # `flutter run` resolves locked deps from the offline repo. Must set a
+          # GRADLE_USER_HOME and install the init script into its init.d/.
+          offline-dev-hook-eval = let
+            hook = self.lib.offlineGradleDevHook {
+              inherit pkgs;
+              lockFile = ./tests/fixtures/flutter/flutter-minimal.lock;
+              gradleUserHome = "$HOME/.gradle-flutter2nix-test";
+            };
+          in
+          assert pkgs.lib.assertMsg (builtins.isString hook)
+            "offlineGradleDevHook must return a shell-hook string";
+          assert pkgs.lib.assertMsg (pkgs.lib.hasInfix "GRADLE_USER_HOME" hook)
+            "the hook must set GRADLE_USER_HOME";
+          assert pkgs.lib.assertMsg (pkgs.lib.hasInfix "init.d" hook)
+            "the hook must install the offline init script into GRADLE_USER_HOME/init.d";
+          pkgs.runCommand "offline-dev-hook-eval" { } "touch $out";
           # Pre-mortem #5 (Nix half): the git+url#rev packing must round-trip
           # into exact fetchgit args. Pure eval — runs on all systems.
           ios2nix-split-git-url-eval = let
