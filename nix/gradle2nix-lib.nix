@@ -243,9 +243,41 @@ let
       ];
     };
 
+  # Returns a shell-hook string that wires the lockfile's offline Maven repo
+  # into a dedicated GRADLE_USER_HOME, so dev-shell `flutter run` / `gradle`
+  # resolve locked deps from the reproducible repo. The init script injects the
+  # offline repo at the front of every RepositoryHandler, so locked artifacts
+  # come from file:// while anything not yet locked falls through to the
+  # project's own google()/mavenCentral() over the network (no re-lock needed
+  # mid-development). Drop the result into devenv enterShell, a mkShell
+  # shellHook, or a direnv .envrc.
+  #
+  # Parameters:
+  #   pkgs           — nixpkgs attribute set
+  #   lockFile       — flutter2nix.lock / gradle2nix.lock (android section used)
+  #   gradleUserHome — shell expression for the GRADLE_USER_HOME to use. A
+  #                    dedicated path keeps the offline wiring out of the global
+  #                    ~/.gradle (which would force every project on the machine
+  #                    to prefer this repo). Default: "$HOME/.gradle-flutter2nix".
+  offlineGradleDevHook =
+    { pkgs
+    , lockFile
+    , gradleUserHome ? "$HOME/.gradle-flutter2nix"
+    }:
+    let
+      gradle = buildGradleProject { inherit pkgs lockFile; };
+    in
+    ''
+      # flutter2nix: prefer the locked offline Maven repo for Gradle builds.
+      export GRADLE_USER_HOME="${gradleUserHome}"
+      mkdir -p "$GRADLE_USER_HOME/init.d"
+      install -m644 ${gradle.initScript} \
+        "$GRADLE_USER_HOME/init.d/flutter2nix-offline.gradle"
+    '';
+
 in
 {
-  inherit buildGradleProject wrapperGradleMajor defaultGradlePackage;
+  inherit buildGradleProject wrapperGradleMajor defaultGradlePackage offlineGradleDevHook;
 
   # Full derivation that runs a Gradle task offline using the locked Maven repo.
   # Copies *.apk and *.aab from the release output directory to $out.
