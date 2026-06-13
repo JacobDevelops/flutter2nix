@@ -7,7 +7,7 @@
 // Gradle can resolve from real .module/.pom files and fall back to bare artifacts
 // (synthetic POMs are generated for artifacts whose real POM is unreachable offline).
 def gradle2nixAddOfflineRepo = { repos ->
-    repos.maven {
+    def repo = repos.maven {
         url "file://@mavenRepo@"
         metadataSources {
             gradleMetadata()
@@ -15,6 +15,14 @@ def gradle2nixAddOfflineRepo = { repos ->
             artifact()
         }
     }
+    // Move the offline repo to the front: Gradle consults repositories in
+    // declaration order, so a project that declares google()/mavenCentral()
+    // (every dev-shell `flutter run`) would otherwise hit the network for
+    // every locked artifact before reaching the file:// repo. A file:// hit
+    // is a local stat; a network miss is a round-trip. In sandboxed builds
+    // the offline repo is the only one, so this reorder is a no-op there.
+    repos.remove(repo)
+    repos.add(0, repo)
 }
 
 // beforeSettings: fires BEFORE settings.gradle.kts is evaluated, for both the root
