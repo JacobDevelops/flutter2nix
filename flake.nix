@@ -329,6 +329,44 @@
             };
           in assert drv ? drvPath;
              pkgs.runCommand "buildFlutterAndroidApp-eval" { } "touch $out";
+          # Boilerplate: consumers should not have to hand-pin gradlePackage to
+          # the wrapper version ("must match the Gradle wrapper version the
+          # lockfile was captured with" is a footgun). The builder must read
+          # android/gradle/wrapper/gradle-wrapper.properties from src and pick
+          # pkgs.gradle_<major> itself; an explicit gradlePackage still wins.
+          gradle-wrapper-autodetect-eval = let
+            mkDrv = extra: self.lib.buildFlutterAndroidApp ({
+              inherit pkgs;
+              name = "wrapper-autodetect-eval";
+              src = ./tests/fixtures/flutter/wrapper-gradle9;
+              lockFile = ./tests/fixtures/flutter/flutter-minimal.lock;
+              androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
+            } // extra);
+            auto = mkDrv { };
+            explicit = mkDrv { gradlePackage = pkgs.gradle_8; };
+          in
+          assert pkgs.lib.assertMsg
+            (builtins.elem pkgs.gradle_9 auto.buildInputs)
+            "buildFlutterAndroidApp must autodetect gradle_9 from the app's gradle-wrapper.properties (got the fallback instead)";
+          assert pkgs.lib.assertMsg
+            (builtins.elem pkgs.gradle_8 explicit.buildInputs)
+            "an explicit gradlePackage must override wrapper autodetection";
+          pkgs.runCommand "gradle-wrapper-autodetect-eval" { } "touch $out";
+          # Boilerplate: name and lockFile must default sensibly — name from
+          # pubspec.yaml's `name:` field, lockFile from src/flutter2nix.lock
+          # (where the flutter2nix CLI writes it).
+          flutter-app-defaults-eval = let
+            result = self.lib.buildFlutterApp {
+              inherit pkgs;
+              src = ./tests/fixtures/flutter/minimal-app;
+              androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
+            };
+            drv = result.android or result.ios;
+          in
+          assert pkgs.lib.assertMsg (drv.name == "minimal_app")
+            "buildFlutterApp must default the derivation name to the pubspec.yaml package name (got ${drv.name})";
+          builtins.seq drv.drvPath
+            (pkgs.runCommand "flutter-app-defaults-eval" { } "touch $out");
           # flutter_tools requires `git` on PATH at startup; the nixpkgs Flutter
           # wrapper bundles one, but raw Google-tarball SDKs do not — without
           # the builder providing it, `flutter build` dies with "Unable to find
