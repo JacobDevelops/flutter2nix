@@ -152,8 +152,14 @@ let
         (lib.filter (e: !e.isMavenPom) entries) ++
         (lib.filter (e: e.isMavenPom) entries);
 
+      # Symlink fetched artifacts instead of copying: the fetchurl outputs
+      # already live in the store, so copies would double the on-disk
+      # footprint (~GBs for a real app lockfile). -f: a real .pom (processed
+      # last, see orderedEntries) replaces the synthetic stub written
+      # alongside its artifact.
       installCmds = lib.concatMapStrings (e: ''
-        install -Dm644 ${e.fetched} "$out/${e.rel}"
+        mkdir -p "$out/${dirOf e.rel}"
+        ln -sfn ${e.fetched} "$out/${e.rel}"
         ${lib.optionalString (e.pom != null) ''
           cat > "$out/${e.pom}" << 'POMEOF'
           ${e.pomXml}
