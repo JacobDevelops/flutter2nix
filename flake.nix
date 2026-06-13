@@ -398,6 +398,28 @@
               grep -q 'file://${gradle.mavenRepo}' ${gradle.initScript}
               touch $out
             '';
+          # Dev-shell offline preference: in a non-sandboxed `flutter run` the
+          # project declares its own google()/mavenCentral(), so the offline
+          # repo only wins if the init script injects it at the FRONT of each
+          # RepositoryHandler. Without this, Gradle resolves locked deps over
+          # the network (verified: 16+ POM downloads on jfit). Sandboxed builds
+          # have only the one repo, so front-insertion is a harmless no-op there.
+          init-script-prefers-offline-repo =
+            let
+              gradle = self.lib.buildGradleProject {
+                inherit pkgs;
+                lockFile = ./tests/fixtures/flutter/flutter-minimal.lock;
+              };
+            in
+            pkgs.runCommand "init-script-prefers-offline-repo" { } ''
+              if ! grep -q 'add(0,' ${gradle.initScript}; then
+                echo "FAIL: init script does not inject the offline repo at the front" >&2
+                echo "  (no 'add(0, ...)' front-insertion found — locked deps would" >&2
+                echo "   resolve over the network in a dev shell with google()/mavenCentral())" >&2
+                exit 1
+              fi
+              touch $out
+            '';
           # Pre-mortem #5 (Nix half): the git+url#rev packing must round-trip
           # into exact fetchgit args. Pure eval — runs on all systems.
           ios2nix-split-git-url-eval = let
