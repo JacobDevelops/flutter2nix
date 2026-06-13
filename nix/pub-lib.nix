@@ -6,6 +6,22 @@
 { lib }:
 
 {
+  # Reads the Dart package name from src/pubspec.yaml at evaluation time.
+  # Used to default derivation names so consumers need not pass `name`.
+  pubspecName = src:
+    let
+      nameLine = lib.findFirst
+        (l: builtins.match "name:[[:space:]]*.+" l != null)
+        null
+        (lib.splitString "\n" (builtins.readFile (src + "/pubspec.yaml")));
+      m =
+        if nameLine == null then null
+        else builtins.match "name:[[:space:]]*\"?([A-Za-z0-9_-]+)\"?[[:space:]]*" nameLine;
+    in
+    if m == null
+    then throw "pub-lib: could not read the package name from ${toString src}/pubspec.yaml — pass `name` explicitly"
+    else lib.head m;
+
   # Returns the package_config.json derivation for a Flutter app source tree.
   pubPackageConfig =
     { pkgs

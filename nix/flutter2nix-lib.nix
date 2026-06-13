@@ -36,9 +36,9 @@ let
   #   exportOptions   — path to ExportOptions.plist (required if signing != null)
   buildFlutterIOSApp =
     { pkgs
-    , name
     , src
-    , lockFile
+    , name ? pubLib.pubspecName src
+    , lockFile ? src + "/flutter2nix.lock"
     , pubspecLockFile ? src + "/pubspec.lock"
     , gitHashes ? { }
     , flutterSdk ? pkgs.flutter
@@ -233,13 +233,15 @@ let
   #
   # Parameters:
   #   pkgs            — nixpkgs attribute set
-  #   name            — derivation name
   #   src             — Flutter project root
-  #   lockFile        — flutter2nix lockfile (must have android.nodes and/or ios.nodes)
+  #   name            — derivation name (default: the pubspec.yaml package name)
+  #   lockFile        — flutter2nix lockfile with android.nodes and/or ios.nodes
+  #                     (default: src/flutter2nix.lock, where the CLI writes it)
   #   platforms       — list of platforms to build (default: ["android" "ios"])
   #   androidSdk      — Android SDK (required for Android builds, default: null)
   #   gradlePackage   — Gradle for Android builds; must match the wrapper version
-  #                     the lockfile was captured with (default: pkgs.gradle)
+  #                     the lockfile was captured with (default: autodetected
+  #                     from the app's gradle-wrapper.properties)
   #   signing         — null or signing config for iOS (passed to buildFlutterIOSApp)
   #   exportOptions   — path to ExportOptions.plist (passed to buildFlutterIOSApp)
   #   ...             — other parameters passed through to the platform builders
@@ -247,16 +249,19 @@ let
   # Returns an attrset with keys for each built platform (e.g., { android = drv; ios = drv; })
   buildFlutterApp =
     { pkgs
-    , name
     , src
-    , lockFile
+    , name ? pubLib.pubspecName src
+    , lockFile ? src + "/flutter2nix.lock"
     , platforms ? [ "android" "ios" ]
     , androidSdk ? null
     , signing ? null
     , ...
     }@args:
     let
-      lock = builtins.fromJSON (builtins.readFile lockFile);
+      lock =
+        if builtins.pathExists lockFile
+        then builtins.fromJSON (builtins.readFile lockFile)
+        else throw "buildFlutterApp: lockfile ${toString lockFile} not found — run `flutter2nix lock` in the app root or pass lockFile explicitly";
       wantsAndroid = builtins.elem "android" platforms;
       wantsIos = builtins.elem "ios" platforms;
 
@@ -281,9 +286,11 @@ let
       androidDrv = androidLib.buildFlutterAndroidApp (passThrough // {
         inherit pkgs name src lockFile androidSdk;
         jdk = args.jdk or pkgs.jdk17;
-        gradlePackage = args.gradlePackage or pkgs.gradle;
         flutterBuildArgs = args.flutterBuildArgs or [];
-      });
+      }
+      # Only forward an explicit gradlePackage: when absent,
+      # buildFlutterAndroidApp autodetects from gradle-wrapper.properties.
+      // lib.optionalAttrs (args ? gradlePackage) { inherit (args) gradlePackage; });
 
       iosDrv = buildFlutterIOSApp (passThrough // {
         inherit pkgs name src lockFile signing;

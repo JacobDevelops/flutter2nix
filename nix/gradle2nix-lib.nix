@@ -110,9 +110,42 @@ let
     let
       lock = builtins.fromJSON (builtins.readFile lockFile);
     in
-    if lock ? android then lock.android.nodes
+    if !builtins.pathExists lockFile
+    then throw "gradle2nix-lib: lockfile ${toString lockFile} not found — run `flutter2nix lock` in the app root or pass lockFile explicitly"
+    else if lock ? android then lock.android.nodes
     else if lock ? nodes then lock.nodes
     else throw "gradle2nix-lib: unrecognized lockfile format in ${toString lockFile}";
+
+  # Parses the Gradle major version pinned by the project's committed wrapper
+  # properties (android/gradle/wrapper for Flutter apps, gradle/wrapper for
+  # pure Gradle projects). Returns null when no wrapper file exists.
+  wrapperGradleMajor = src:
+    let
+      propsFile = lib.findFirst builtins.pathExists null [
+        (src + "/android/gradle/wrapper/gradle-wrapper.properties")
+        (src + "/gradle/wrapper/gradle-wrapper.properties")
+      ];
+      distLine =
+        if propsFile == null then null
+        else lib.findFirst (l: lib.hasPrefix "distributionUrl=" l) null
+          (lib.splitString "\n" (builtins.readFile propsFile));
+      m =
+        if distLine == null then null
+        else builtins.match ".*gradle-([0-9]+)\\.[^/]*\\.zip[[:space:]]*" distLine;
+    in
+    if m == null then null else lib.head m;
+
+  # Default Gradle for a project: the major version its wrapper pins — which
+  # is the version the lockfile was captured with, since gradle2nix locks
+  # through the wrapper — falling back to pkgs.gradle when no wrapper exists.
+  # Hand-pinning gradlePackage to match the wrapper was the #1 consumer
+  # footgun (a mismatched Gradle requests kotlin-dsl versions the offline
+  # repo doesn't have).
+  defaultGradlePackage = pkgs: src:
+    let major = wrapperGradleMajor src;
+    in
+    if major == null then pkgs.gradle
+    else pkgs."gradle_${major}" or (throw "gradle2nix-lib: project pins Gradle ${major}.x in gradle-wrapper.properties but nixpkgs has no gradle_${major}");
 
   # Builds a local Maven repository from lockfile nodes.
   # Each artifact is fetched by its locked sha256; a minimal POM is generated
@@ -212,7 +245,7 @@ let
 
 in
 {
-  inherit buildGradleProject;
+  inherit buildGradleProject wrapperGradleMajor defaultGradlePackage;
 
   # Full derivation that runs a Gradle task offline using the locked Maven repo.
   # Copies *.apk and *.aab from the release output directory to $out.
@@ -231,7 +264,7 @@ in
     , gradleTask ? "assembleRelease"
     , gradleFlags ? []
     , jdk ? pkgs.jdk17
-    , gradlePackage ? pkgs.gradle
+    , gradlePackage ? defaultGradlePackage pkgs src
     , androidSdk
     , ...
     }:
@@ -301,29 +334,31 @@ in
   #
   # Parameters:
   #   pkgs            — nixpkgs attribute set
-  #   name            — derivation name
   #   src             — Flutter app source (must contain pubspec.yaml, android/, lib/)
-  #   lockFile        — flutter2nix.lock from `gradle2nix lock` (contains android.nodes)
+  #   name            — derivation name (default: the pubspec.yaml package name)
+  #   lockFile        — flutter2nix.lock with android.nodes (default:
+  #                     src/flutter2nix.lock, where `flutter2nix lock` writes it)
   #   pubspecLockFile — pubspec.lock from a real `flutter pub get` run (must record
   #                     hosted-package sha256 hashes). Default: src + "/pubspec.lock".
   #                     NOTE: converted to JSON at evaluation time (import-from-derivation).
   #   gitHashes       — hashes for git-sourced pub dependencies (pub does not record them)
   #   flutterSdk      — Flutter SDK package (default: pkgs.flutter)
   #   jdk             — JDK package (default: pkgs.jdk17)
-  #   gradlePackage   — Gradle package; MUST match the wrapper version the lockfile
-  #                     was captured with (default: pkgs.gradle)
+  #   gradlePackage   — Gradle package; must match the wrapper version the lockfile
+  #                     was captured with (default: autodetected from the app's
+  #                     gradle-wrapper.properties via defaultGradlePackage)
   #   androidSdk      — Android SDK from androidenv.composeAndroidPackages { }.androidsdk
   #   flutterBuildArgs — extra args for `flutter build appbundle` (e.g. ["--flavor" "stag"])
   buildFlutterAndroidApp =
     { pkgs
-    , name
     , src
-    , lockFile
+    , name ? pubLib.pubspecName src
+    , lockFile ? src + "/flutter2nix.lock"
     , pubspecLockFile ? src + "/pubspec.lock"
     , gitHashes ? { }
     , flutterSdk ? pkgs.flutter
     , jdk ? pkgs.jdk17
-    , gradlePackage ? pkgs.gradle
+    , gradlePackage ? defaultGradlePackage pkgs src
     , androidSdk
     , flutterBuildArgs ? []
     , ...
