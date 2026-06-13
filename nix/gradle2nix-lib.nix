@@ -331,7 +331,9 @@ in
     in
     pkgs.stdenv.mkDerivation {
       inherit name src;
-      buildInputs = gradle.buildInputs ++ [ flutterSdk androidSdk ];
+      # git: flutter_tools requires it on PATH at startup. The nixpkgs Flutter
+      # wrapper bundles its own; raw Google-tarball SDKs do not.
+      buildInputs = gradle.buildInputs ++ [ flutterSdk androidSdk pkgs.git ];
       ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
       ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
       JAVA_HOME = "${jdk}";
@@ -357,6 +359,11 @@ GRADLEW_EOF
           "${flutterSdk}" "${androidSdk}/libexec/android-sdk" \
           > android/local.properties
         export HOME="$NIX_BUILD_TOP"
+        # Raw-tarball Flutter SDKs keep their .git, and git refuses repos owned
+        # by another user ("dubious ownership") — which is every store path in
+        # the sandbox. Trust everything within this throwaway HOME (same
+        # workaround as buildFlutterIOSApp).
+        printf '[safe]\n\tdirectory = *\n' > "$HOME/.gitconfig"
         # Install the Nix-generated package config so `flutter build --no-pub` resolves
         # all Dart packages from the store without running pub. The copied pubspec.lock
         # keeps flutter_tools' freshness check consistent with the config.
