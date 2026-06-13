@@ -288,6 +288,15 @@ pub async fn build_dependency_graph(
         nodes
     };
 
+    // Persist URL-verification results. The earlier persists run before this
+    // phase, so without one here every url_exists entry dies with the process
+    // and each warm lock re-HEADs all ~3k URLs (~8s on a real app).
+    if let Some(cache) = &resolver_config.resolve_cache {
+        if let Err(e) = cache.persist() {
+            log::warn!("could not persist resolve cache: {:#}", e);
+        }
+    }
+
     // Sort nodes deterministically by (name, url) for reproducible lockfiles.
     // This ensures identical content produces identical output regardless of discovery order.
     nodes.sort_by(|a, b| {

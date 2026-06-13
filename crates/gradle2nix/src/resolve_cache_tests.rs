@@ -27,6 +27,25 @@ fn roundtrip_positive_negative_and_pom_entries() {
 }
 
 #[test]
+fn url_exists_roundtrips_through_persist() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = ResolveCache::open(dir.path());
+
+    cache.store_url_exists("https://repo/a.jar", true);
+    cache.store_url_exists("https://repo/missing.jar", false);
+    cache.persist().unwrap();
+
+    // Reopen from disk — warm lock runs must skip re-HEADing verified URLs.
+    let cache = ResolveCache::open(dir.path());
+    assert_eq!(cache.lookup_url_exists("https://repo/a.jar"), Some(true));
+    assert_eq!(
+        cache.lookup_url_exists("https://repo/missing.jar"),
+        Some(false)
+    );
+    assert_eq!(cache.lookup_url_exists("https://repo/never-seen.jar"), None);
+}
+
+#[test]
 fn corrupt_cache_file_is_discarded_not_an_error() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("caches/gradle2nix/resolve-cache.json");
