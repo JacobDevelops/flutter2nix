@@ -241,6 +241,33 @@
             pkgs = pkgs;
             lockFile = ./tests/fixtures/gradle/android-minimal.lock;
           }).mavenRepo;
+          # Disk: the combined Maven repo must reference fetched artifacts as
+          # store symlinks, not copies — copying duplicates every artifact
+          # (~GBs for a real app: each file exists once as a fetchurl output
+          # and again inside gradle-maven-repo).
+          maven-repo-zero-copy = let
+            repo = (self.lib.buildGradleProject {
+              inherit pkgs;
+              lockFile = ./tests/fixtures/gradle/android-minimal.lock;
+            }).mavenRepo;
+          in
+          pkgs.runCommand "maven-repo-zero-copy" { } ''
+            # Fetched artifacts (jar/aar/module) must be symlinks into the store.
+            dups=$(find ${repo} -type f \( -name '*.jar' -o -name '*.aar' -o -name '*.module' \) -print)
+            if [ -n "$dups" ]; then
+              echo "FAIL: duplicated regular files in maven repo (expected store symlinks):" >&2
+              printf '%s\n' "$dups" >&2
+              exit 1
+            fi
+            # Every symlink must resolve (no dangling links).
+            broken=$(find ${repo} -type l ! -exec test -e {} \; -print)
+            if [ -n "$broken" ]; then
+              echo "FAIL: dangling symlinks in maven repo:" >&2
+              printf '%s\n' "$broken" >&2
+              exit 1
+            fi
+            touch $out
+          '';
           # Verifies flutter2nix-format lockfile (android.nodes wrapper) works and
           # that Flutter Storage CDN artifacts (io.flutter:*) are correctly routed.
           flutter-maven-repo-test = (self.lib.buildGradleProject {
