@@ -21,3 +21,7 @@ the host is recorded per run in history.jsonl.
 | 2026-06-12T17:35:23+1000 | 338a5d0c9bf0 | flutter-build | 60.8s | 23.5s |
 | 2026-06-12T17:35:23+1000 | 338a5d0c9bf0 | ios-lock | 12.9s | 0.3s |
 | 2026-06-12T17:35:23+1000 | 338a5d0c9bf0 | ios-build | 31.9s | 23.8s |
+| 2026-06-13T13:58:01+1000 | a0cf14cf1797 | lock | 147.1s | 13.5s |
+| 2026-06-13T13:58:01+1000 | a0cf14cf1797 | gradle-build | 35.8s | 9.5s |
+| 2026-06-13T13:58:01+1000 | a0cf14cf1797 | flutter-build | 59.2s | 21.1s |
+| 2026-06-13T13:58:01+1000 | a0cf14cf1797 | ios-lock | 4.9s | 0.0s |

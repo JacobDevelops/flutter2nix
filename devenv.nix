@@ -42,11 +42,13 @@ in
     gradle_8
     androidSdk
     jujutsu
-    # ios2nix lock hashes git-source pods via nix-prefetch-git;
-    # cocoapods drives pod install for the iOS fixtures and benchmarks
+    # ios2nix lock hashes git-source pods via nix-prefetch-git (works on Linux).
     nix-prefetch-git
-    cocoapods
-  ];
+  ]
+  # cocoapods drives pod install for the iOS fixtures/benchmarks, but it is a
+  # Darwin-only package (no Linux build) — guard it so the dev shell still
+  # evaluates on Linux, where iOS work is impossible anyway.
+  ++ lib.optionals pkgs.stdenv.isDarwin [ pkgs.cocoapods ];
 
   env = {
     ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
