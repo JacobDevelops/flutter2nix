@@ -136,12 +136,13 @@
             gradleTask = "assembleRelease";
           };
           # Full Flutter appbundle build (via buildFlutterApp dispatcher).
-          # Uses the unified lockfile (ios/flutter2nix.lock has both android+ios sections).
+          # Uses the unified lockfile (root flutter2nix.lock has both
+          # android+ios sections — the CLI's default output location).
           buildFlutterAndroidApp-e2e = (self.lib.buildFlutterApp {
             inherit pkgs androidSdk;
             name = "flutter-android-e2e";
             src = ./tests/fixtures/flutter/minimal-app;
-            lockFile = ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock;
+            lockFile = ./tests/fixtures/flutter/minimal-app/flutter2nix.lock;
           }).android;
         };
         # iOS e2e: unsigned `flutter build ios` of the Flutter fixture against
@@ -151,14 +152,14 @@
         # tier as the android e2e.
         iosE2eTests = pkgs.lib.optionalAttrs (
           pkgs.stdenv.isDarwin
-          && builtins.pathExists ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock
+          && builtins.pathExists ./tests/fixtures/flutter/minimal-app/flutter2nix.lock
         ) {
           # Build unsigned iOS app (via buildFlutterApp dispatcher).
           buildFlutterIOSApp-e2e = (self.lib.buildFlutterApp {
             inherit pkgs;
             name = "flutter-ios-e2e";
             src = ./tests/fixtures/flutter/minimal-app;
-            lockFile = ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock;
+            lockFile = ./tests/fixtures/flutter/minimal-app/flutter2nix.lock;
           }).ios;
         };
         # Whole-suite aggregate: `nix build .#e2e` realises every e2e entry.
@@ -286,7 +287,7 @@
               {
                 nativeBuildInputs = [ pkgs.jq ];
                 androidLock = ./tests/fixtures/flutter/minimal-app/android/flutter2nix.lock;
-                iosLock = ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock;
+                iosLock = ./tests/fixtures/flutter/minimal-app/flutter2nix.lock;
               } ''
               fail=0
               for lock in "$androidLock" "$iosLock"; do
@@ -376,7 +377,7 @@
               inherit pkgs;
               name = "build-flutter-app-eval";
               src = ./tests/fixtures/flutter/minimal-app;
-              lockFile = ./tests/fixtures/flutter/minimal-app/ios/flutter2nix.lock;
+              lockFile = ./tests/fixtures/flutter/minimal-app/flutter2nix.lock;
               androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
             };
             drv = result.android or result.ios;
