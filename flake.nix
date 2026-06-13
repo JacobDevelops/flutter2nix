@@ -301,6 +301,23 @@
             };
           in assert drv ? drvPath;
              pkgs.runCommand "buildFlutterAndroidApp-eval" { } "touch $out";
+          # flutter_tools requires `git` on PATH at startup; the nixpkgs Flutter
+          # wrapper bundles one, but raw Google-tarball SDKs do not — without
+          # the builder providing it, `flutter build` dies with "Unable to find
+          # git in your PATH" (jfit baseline failure, 2026-06-13).
+          buildFlutterAndroidApp-provides-git = let
+            drv = self.lib.buildFlutterAndroidApp {
+              inherit pkgs;
+              name = "flutter-android-git-eval";
+              src = ./tests/fixtures/flutter/minimal-app;
+              lockFile = ./tests/fixtures/flutter/flutter-minimal.lock;
+              androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
+            };
+          in
+          assert pkgs.lib.assertMsg
+            (builtins.elem pkgs.git (drv.buildInputs or [ ]))
+            "buildFlutterAndroidApp must put pkgs.git in buildInputs: flutter_tools needs git on PATH and raw-tarball Flutter SDKs do not bundle it";
+          pkgs.runCommand "buildFlutterAndroidApp-provides-git" { } "touch $out";
           # Verifies buildFlutterAndroidApp infrastructure without running flutter build:
           # - init script is created and references the Maven repo
           buildFlutterAndroidApp-integration-stub =
