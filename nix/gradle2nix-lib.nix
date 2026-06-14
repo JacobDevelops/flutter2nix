@@ -314,6 +314,44 @@ let
         "$GRADLE_USER_HOME/init.d/flutter2nix-offline.gradle"
     '';
 
+  # Signs an Android App Bundle (.aab) with a release/upload key, OUTSIDE the
+  # Nix build, so keystore material never enters the store and the offline
+  # buildFlutterAndroidApp output stays pure and reproducible. Returns a runnable
+  # writeShellApplication; pass the keystore + passwords via the environment:
+  #
+  #   KEYSTORE=upload.jks KEYSTORE_PASSWORD=… KEY_ALIAS=… KEY_PASSWORD=… \
+  #     flutter2nix-sign-aab <unsigned.aab> <out.aab>
+  #
+  # AABs are signed with jarsigner using the upload key; Google Play App Signing
+  # re-signs the delivered APKs with the app signing key, so no zipalign/apksigner
+  # step is needed for the bundle uploaded to the Play Console.
+  signAndroidAab =
+    {
+      pkgs,
+      jdk ? pkgs.jdk21,
+    }:
+    pkgs.writeShellApplication {
+      name = "flutter2nix-sign-aab";
+      runtimeInputs = [ jdk ];
+      text = ''
+        in_aab="''${1:?usage: flutter2nix-sign-aab <unsigned.aab> <out.aab>}"
+        out_aab="''${2:?usage: flutter2nix-sign-aab <unsigned.aab> <out.aab>}"
+        : "''${KEYSTORE:?KEYSTORE (path to the keystore file) must be set}"
+        : "''${KEYSTORE_PASSWORD:?KEYSTORE_PASSWORD must be set}"
+        : "''${KEY_ALIAS:?KEY_ALIAS must be set}"
+        : "''${KEY_PASSWORD:?KEY_PASSWORD must be set}"
+        install -D "$in_aab" "$out_aab"
+        jarsigner \
+          -keystore "$KEYSTORE" \
+          -storepass "$KEYSTORE_PASSWORD" \
+          -keypass "$KEY_PASSWORD" \
+          -sigalg SHA256withRSA -digestalg SHA-256 \
+          "$out_aab" "$KEY_ALIAS"
+        jarsigner -verify "$out_aab"
+        echo "flutter2nix: signed $out_aab"
+      '';
+    };
+
 in
 {
   inherit
@@ -321,6 +359,7 @@ in
     wrapperGradleMajor
     defaultGradlePackage
     offlineGradleDevHook
+    signAndroidAab
     ;
 
   # Full derivation that runs a Gradle task offline using the locked Maven repo.
@@ -569,6 +608,16 @@ in
                 # the Gradle JVM instead. Placed here (not in the project's gradle.properties)
                 # so it reaches every build in the composite, including flutter_tools.
                 echo "kotlin.compiler.execution.strategy=in-process" >> "$GRADLE_USER_HOME/gradle.properties"
+                # Give the Gradle JVM a generous, deterministic heap. AGP's
+                # FinalizeBundleTask runs bundletool in-process, and packaging the
+                # release AAB (the fixture's intermediary bundle is ~90MB) routinely
+                # exceeds Gradle's ~512MB default heap. With the default it OOMs
+                # intermittently — fine when a build runs alone, but flaky under the
+                # CPU contention of a parallel `nix build .#e2e` (GC gets starved and
+                # tips into "Java heap space" at :app:signReleaseBundle /
+                # FinalizeBundleTask$BundleToolRunnable). A fixed 4g heap removes the
+                # flakiness; it also covers Kotlin in-process compilation above.
+                echo "org.gradle.jvmargs=-Xmx4g" >> "$GRADLE_USER_HOME/gradle.properties"
                 # Hermetically generate .flutter-plugins-dependencies: flutter_tools
                 # writes it during pub get with developer-machine paths and it is
                 # gitignored, so a clean checkout ships none — but the Flutter Gradle
