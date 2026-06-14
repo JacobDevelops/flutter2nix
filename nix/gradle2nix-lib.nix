@@ -14,15 +14,18 @@ let
     "https://plugins.gradle.org/m2/"
   ];
 
-  artifactRelPath = url:
+  artifactRelPath =
+    url:
     let
       base = lib.findFirst (b: lib.hasPrefix b url) null knownRepoBases;
     in
-    if base != null
-    then lib.removePrefix base url
-    else throw "gradle2nix-lib: unrecognized Maven repository URL: ${url}";
+    if base != null then
+      lib.removePrefix base url
+    else
+      throw "gradle2nix-lib: unrecognized Maven repository URL: ${url}";
 
-  pomRelPath = relPath:
+  pomRelPath =
+    relPath:
     let
       pathParts = lib.splitString "/" relPath;
       dir = lib.concatStringsSep "/" (lib.init pathParts);
@@ -32,7 +35,8 @@ let
     in
     "${dir}/${nameNoExt}.pom";
 
-  minimalPom = name: version:
+  minimalPom =
+    name: version:
     let
       coords = lib.splitString ":" name;
       group = lib.elemAt coords 0;
@@ -106,32 +110,42 @@ let
 
   # Reads nodes from a gradle2nix.lock ({ nodes: [...] }) or
   # flutter2nix.lock ({ android: { nodes: [...] } }).
-  readNodes = lockFile:
+  readNodes =
+    lockFile:
     let
       lock = builtins.fromJSON (builtins.readFile lockFile);
     in
-    if !builtins.pathExists lockFile
-    then throw "gradle2nix-lib: lockfile ${toString lockFile} not found — run `flutter2nix lock` in the app root or pass lockFile explicitly"
-    else if lock ? android then lock.android.nodes
-    else if lock ? nodes then lock.nodes
-    else throw "gradle2nix-lib: unrecognized lockfile format in ${toString lockFile}";
+    if !builtins.pathExists lockFile then
+      throw "gradle2nix-lib: lockfile ${toString lockFile} not found — run `flutter2nix lock` in the app root or pass lockFile explicitly"
+    else if lock ? android then
+      lock.android.nodes
+    else if lock ? nodes then
+      lock.nodes
+    else
+      throw "gradle2nix-lib: unrecognized lockfile format in ${toString lockFile}";
 
   # Parses the Gradle major version pinned by the project's committed wrapper
   # properties (android/gradle/wrapper for Flutter apps, gradle/wrapper for
   # pure Gradle projects). Returns null when no wrapper file exists.
-  wrapperGradleMajor = src:
+  wrapperGradleMajor =
+    src:
     let
       propsFile = lib.findFirst builtins.pathExists null [
         (src + "/android/gradle/wrapper/gradle-wrapper.properties")
         (src + "/gradle/wrapper/gradle-wrapper.properties")
       ];
       distLine =
-        if propsFile == null then null
-        else lib.findFirst (l: lib.hasPrefix "distributionUrl=" l) null
-          (lib.splitString "\n" (builtins.readFile propsFile));
+        if propsFile == null then
+          null
+        else
+          lib.findFirst (l: lib.hasPrefix "distributionUrl=" l) null (
+            lib.splitString "\n" (builtins.readFile propsFile)
+          );
       m =
-        if distLine == null then null
-        else builtins.match ".*gradle-([0-9]+)\\.[^/]*\\.zip[[:space:]]*" distLine;
+        if distLine == null then
+          null
+        else
+          builtins.match ".*gradle-([0-9]+)\\.[^/]*\\.zip[[:space:]]*" distLine;
     in
     if m == null then null else lib.head m;
 
@@ -141,11 +155,16 @@ let
   # Hand-pinning gradlePackage to match the wrapper was the #1 consumer
   # footgun (a mismatched Gradle requests kotlin-dsl versions the offline
   # repo doesn't have).
-  defaultGradlePackage = pkgs: src:
-    let major = wrapperGradleMajor src;
+  defaultGradlePackage =
+    pkgs: src:
+    let
+      major = wrapperGradleMajor src;
     in
-    if major == null then pkgs.gradle
-    else pkgs."gradle_${major}" or (throw "gradle2nix-lib: project pins Gradle ${major}.x in gradle-wrapper.properties but nixpkgs has no gradle_${major}");
+    if major == null then
+      pkgs.gradle
+    else
+      pkgs."gradle_${major}"
+        or (throw "gradle2nix-lib: project pins Gradle ${major}.x in gradle-wrapper.properties but nixpkgs has no gradle_${major}");
 
   # Builds a local Maven repository from lockfile nodes.
   # Each artifact is fetched by its locked sha256; a minimal POM is generated
@@ -154,36 +173,50 @@ let
   # file IS the POM — no synthetic POM is generated for those entries.
   # If a node's URL ends in .module (Gradle Module Metadata), no synthetic POM
   # is generated either — Gradle reads the .module file directly via gradleMetadata().
-  buildMavenRepo = pkgs: nodes:
+  buildMavenRepo =
+    pkgs: nodes:
     let
-      entries = map (node:
+      entries = map (
+        node:
         let
           rel = artifactRelPath node.url;
           isMavenPom = lib.hasSuffix ".pom" rel;
           isMavenModule = lib.hasSuffix ".module" rel;
           noSyntheticPom = isMavenPom || isMavenModule;
           pom = if noSyntheticPom then null else pomRelPath rel;
-          fetched = pkgs.fetchurl { url = node.url; sha256 = node.sha256; };
-          pomXml = if noSyntheticPom then null
-                   else
-                     let
-                       # node.name can be "group:artifact" or "group:artifact:version";
-                       # normalise to "group:artifact:version" for map lookup.
-                       coords = lib.splitString ":" node.name;
-                       groupArtifact = lib.concatStringsSep ":" (lib.sublist 0 2 coords);
-                       key = "${groupArtifact}:${node.version}";
-                     in knownPomOverrides.${key} or (minimalPom node.name node.version);
+          fetched = pkgs.fetchurl {
+            url = node.url;
+            sha256 = node.sha256;
+          };
+          pomXml =
+            if noSyntheticPom then
+              null
+            else
+              let
+                # node.name can be "group:artifact" or "group:artifact:version";
+                # normalise to "group:artifact:version" for map lookup.
+                coords = lib.splitString ":" node.name;
+                groupArtifact = lib.concatStringsSep ":" (lib.sublist 0 2 coords);
+                key = "${groupArtifact}:${node.version}";
+              in
+              knownPomOverrides.${key} or (minimalPom node.name node.version);
         in
-        { inherit rel pom fetched pomXml isMavenPom; }
+        {
+          inherit
+            rel
+            pom
+            fetched
+            pomXml
+            isMavenPom
+            ;
+        }
       ) nodes;
 
       # Process non-POM artifacts first (which also writes synthetic POMs alongside them),
       # then real .pom entries last so they overwrite any synthetic stubs.
       # Without this ordering, a JAR processed after its real POM would re-stamp a
       # synthetic (dep-free) stub on top, breaking transitive resolution.
-      orderedEntries =
-        (lib.filter (e: !e.isMavenPom) entries) ++
-        (lib.filter (e: e.isMavenPom) entries);
+      orderedEntries = (lib.filter (e: !e.isMavenPom) entries) ++ (lib.filter (e: e.isMavenPom) entries);
 
       # Symlink fetched artifacts instead of copying: the fetchurl outputs
       # already live in the store, so copies would double the on-disk
@@ -207,7 +240,8 @@ let
   # Instantiates the Gradle init script template (gradle2nix-init.gradle) with the
   # offline Maven repo path. The template lives in a separate file so it gets Groovy
   # syntax highlighting; replaceVars fails the build if any @var@ is left unsubstituted.
-  makeInitScript = pkgs: mavenRepo:
+  makeInitScript =
+    pkgs: mavenRepo:
     pkgs.replaceVars ./gradle2nix-init.gradle {
       inherit mavenRepo;
     };
@@ -220,11 +254,12 @@ let
   # implies, and a different build-time Gradle requests versions the offline repo
   # doesn't have.
   buildGradleProject =
-    { pkgs
-    , lockFile
-    , jdk ? pkgs.jdk17
-    , gradlePackage ? pkgs.gradle
-    , ...
+    {
+      pkgs,
+      lockFile,
+      jdk ? pkgs.jdk17,
+      gradlePackage ? pkgs.gradle,
+      ...
     }:
     let
       nodes = readNodes lockFile;
@@ -233,7 +268,10 @@ let
     in
     {
       inherit mavenRepo initScript;
-      buildInputs = [ jdk gradlePackage ];
+      buildInputs = [
+        jdk
+        gradlePackage
+      ];
       baseGradleFlags = [
         "--offline"
         "--no-daemon"
@@ -260,9 +298,10 @@ let
   #                    ~/.gradle (which would force every project on the machine
   #                    to prefer this repo). Default: "$HOME/.gradle-flutter2nix".
   offlineGradleDevHook =
-    { pkgs
-    , lockFile
-    , gradleUserHome ? "$HOME/.gradle-flutter2nix"
+    {
+      pkgs,
+      lockFile,
+      gradleUserHome ? "$HOME/.gradle-flutter2nix",
     }:
     let
       gradle = buildGradleProject { inherit pkgs lockFile; };
@@ -277,7 +316,12 @@ let
 
 in
 {
-  inherit buildGradleProject wrapperGradleMajor defaultGradlePackage offlineGradleDevHook;
+  inherit
+    buildGradleProject
+    wrapperGradleMajor
+    defaultGradlePackage
+    offlineGradleDevHook
+    ;
 
   # Full derivation that runs a Gradle task offline using the locked Maven repo.
   # Copies *.apk and *.aab from the release output directory to $out.
@@ -289,35 +333,51 @@ in
   # Must include buildToolsVersions and platformVersions matching the project's build.gradle.
   # nixpkgs places the SDK at ${androidsdk}/libexec/android-sdk (see nixpkgs/androidenv/build-app.nix:37).
   buildAndroidApp =
-    { pkgs
-    , name
-    , src
-    , lockFile
-    , gradleTask ? "assembleRelease"
-    , gradleFlags ? []
-    , jdk ? pkgs.jdk17
-    , gradlePackage ? defaultGradlePackage pkgs src
-    , androidSdk
-    , ...
+    {
+      pkgs,
+      name,
+      src,
+      lockFile,
+      gradleTask ? "assembleRelease",
+      gradleFlags ? [ ],
+      jdk ? pkgs.jdk17,
+      gradlePackage ? defaultGradlePackage pkgs src,
+      androidSdk,
+      ...
     }:
     let
       nodes = readNodes lockFile;
       mavenRepo = buildMavenRepo pkgs nodes;
       initScript = makeInitScript pkgs mavenRepo;
-      allFlags = lib.concatStringsSep " " ([
-        "--offline"
-        "--no-daemon"
-        "--no-configuration-cache"
-        "--init-script"
-        "${initScript}"
-      ] ++ gradleFlags);
+      allFlags = lib.concatStringsSep " " (
+        [
+          "--offline"
+          "--no-daemon"
+          "--no-configuration-cache"
+          "--init-script"
+          "${initScript}"
+        ]
+        ++ gradleFlags
+      );
     in
     pkgs.stdenv.mkDerivation {
       inherit name src;
-      buildInputs = [ jdk gradlePackage androidSdk ];
+      buildInputs = [
+        jdk
+        gradlePackage
+        androidSdk
+      ];
       ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
       ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
       JAVA_HOME = "${jdk}";
+      # Surface the offline Maven repo (a *build* input, absent from the APK/AAB
+      # runtime closure) so consumers can cache it on its own: `nix copy <app>`
+      # only carries the runtime closure, so the ~GB network-fetched Maven layer
+      # would otherwise never reach a binary cache. Caching mavenRepo lets a
+      # downstream build substitute it instead of re-fetching the whole graph.
+      passthru = {
+        inherit mavenRepo initScript;
+      };
       buildPhase = ''
         # GRADLE_USER_HOME cannot be a mkDerivation attribute: $TMPDIR is sandbox-provided
         # at build time and is not available as a Nix string at evaluation time.
@@ -382,124 +442,166 @@ in
   #   androidSdk      — Android SDK from androidenv.composeAndroidPackages { }.androidsdk
   #   flutterBuildArgs — extra args for `flutter build appbundle` (e.g. ["--flavor" "stag"])
   buildFlutterAndroidApp =
-    { pkgs
-    , src
-    , name ? pubLib.pubspecName src
-    , lockFile ? src + "/flutter2nix.lock"
-    , pubspecLockFile ? src + "/pubspec.lock"
-    , gitHashes ? { }
-    , flutterSdk ? pkgs.flutter
-    , jdk ? pkgs.jdk17
-    , gradlePackage ? defaultGradlePackage pkgs src
-    , androidSdk
-    , flutterBuildArgs ? []
-    , ...
+    {
+      pkgs,
+      src,
+      name ? pubLib.pubspecName src,
+      lockFile ? src + "/flutter2nix.lock",
+      pubspecLockFile ? src + "/pubspec.lock",
+      gitHashes ? { },
+      flutterSdk ? pkgs.flutter,
+      jdk ? pkgs.jdk17,
+      gradlePackage ? defaultGradlePackage pkgs src,
+      androidSdk,
+      flutterBuildArgs ? [ ],
+      ...
     }:
     let
-      gradle = buildGradleProject { inherit pkgs lockFile jdk gradlePackage; };
+      gradle = buildGradleProject {
+        inherit
+          pkgs
+          lockFile
+          jdk
+          gradlePackage
+          ;
+      };
 
       packageConfig = pubLib.pubPackageConfig {
-        inherit pkgs name src pubspecLockFile gitHashes flutterSdk;
+        inherit
+          pkgs
+          name
+          src
+          pubspecLockFile
+          gitHashes
+          flutterSdk
+          ;
       };
     in
     pkgs.stdenv.mkDerivation {
       inherit name src;
       # git: flutter_tools requires it on PATH at startup. The nixpkgs Flutter
       # wrapper bundles its own; raw Google-tarball SDKs do not.
-      buildInputs = gradle.buildInputs ++ [ flutterSdk androidSdk pkgs.git ];
+      buildInputs = gradle.buildInputs ++ [
+        flutterSdk
+        androidSdk
+        pkgs.git
+      ];
       ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
       ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
       JAVA_HOME = "${jdk}";
       meta.platforms = lib.platforms.linux;
+      # Surface the network-bound offline layers so consumers can cache them
+      # independently of the app output. They are *build* inputs of this
+      # derivation — absent from the AAB's runtime closure — so a plain
+      # `nix copy <app>` never carries the ~GB Maven graph or the pub package
+      # set, and a downstream CI rebuild re-fetches both from the network. These
+      # are the exact derivations the build consumes, so caching them lets the
+      # build substitute them instead of rebuilding/re-fetching.
+      passthru = {
+        inherit (gradle) mavenRepo initScript;
+        inherit packageConfig;
+        # A single derivation whose runtime closure unions every offline layer
+        # (Maven repo + pub packages): cache this one path to prime both at once.
+        offlineDeps = pkgs.linkFarm "${name}-offline-deps" [
+          {
+            name = "maven-repo";
+            path = gradle.mavenRepo;
+          }
+          {
+            name = "package-config";
+            path = packageConfig;
+          }
+        ];
+      };
       buildPhase = ''
-        runHook preBuild
-        export GRADLE_USER_HOME=$(mktemp -d)
-        mkdir -p "$GRADLE_USER_HOME/init.d"
-        cp ${gradle.initScript} "$GRADLE_USER_HOME/init.d/gradle2nix-flutter.gradle"
-        # Bypass the Gradle wrapper download by replacing gradlew with a direct invocation
-        # of the Nix-provided Gradle. The wrapper would otherwise try to download its
-        # distribution from services.gradle.org, which is blocked in the Nix sandbox.
-        # rm -f: works whether or not the app ships a gradlew (read-only from the store).
-        rm -f android/gradlew
-        cat > android/gradlew << 'GRADLEW_EOF'
-#!/bin/sh
-exec ${gradlePackage}/bin/gradle --offline "$@"
-GRADLEW_EOF
-        chmod +x android/gradlew
-        # Write correct local.properties so settings.gradle.kts can find flutter.sdk.
-        # The file in the source tree has developer-machine paths that don't exist here.
-        printf 'flutter.sdk=%s\nsdk.dir=%s\n' \
-          "${flutterSdk}" "${androidSdk}/libexec/android-sdk" \
-          > android/local.properties
-        export HOME="$NIX_BUILD_TOP"
-        # Raw-tarball Flutter SDKs keep their .git, and git refuses repos owned
-        # by another user ("dubious ownership") — which is every store path in
-        # the sandbox. Trust everything within this throwaway HOME (same
-        # workaround as buildFlutterIOSApp).
-        printf '[safe]\n\tdirectory = *\n' > "$HOME/.gitconfig"
-        # Install the Nix-generated package config so `flutter build --no-pub` resolves
-        # all Dart packages from the store without running pub. The copied pubspec.lock
-        # keeps flutter_tools' freshness check consistent with the config.
-        mkdir -p .dart_tool
-        cp ${packageConfig} .dart_tool/package_config.json
-        chmod u+w .dart_tool/package_config.json
-        install -m644 ${pubspecLockFile} pubspec.lock
-        # flutter_tools also requires .dart_tool/package_graph.json (pub >= 3.5 writes it
-        # during pub get). Generate it with the same script nixpkgs' dartConfigHook uses.
-        ${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3 \
-          ${pkgs.path}/pkgs/build-support/dart/pub2nix/package-graph.py \
-          > .dart_tool/package_graph.json
-        # AGP's Maven-fetched aapt2 is a prebuilt dynamically-linked binary that cannot
-        # exec inside the Nix sandbox (no /lib64 loader). Point AGP at the patched aapt2
-        # from the SDK build-tools instead — same approach as nixpkgs androidenv.
-        # $GRADLE_USER_HOME/gradle.properties is the highest-precedence project property
-        # source and applies to the Gradle build that flutter drives via gradlew.
-        # -L: the composed androidsdk is a symlink farm (build-tools/<ver> links to
-        # another store path), so find must follow symlinks to descend into it.
-        aapt2="$(find -L "$ANDROID_SDK_ROOT/build-tools" -name aapt2 -type f | head -n1)"
-        if [ -z "$aapt2" ]; then
-          echo "ERROR: no aapt2 found under $ANDROID_SDK_ROOT/build-tools" >&2
-          exit 1
-        fi
-        echo "android.aapt2FromMavenOverride=$aapt2" >> "$GRADLE_USER_HOME/gradle.properties"
-        # The Kotlin compile daemon dies on startup inside the Nix sandbox ("terminated
-        # unexpectedly on startup attempt #1 with error code: 0"). Run the compiler in
-        # the Gradle JVM instead. Placed here (not in the project's gradle.properties)
-        # so it reaches every build in the composite, including flutter_tools.
-        echo "kotlin.compiler.execution.strategy=in-process" >> "$GRADLE_USER_HOME/gradle.properties"
-        # Hermetically generate .flutter-plugins-dependencies: flutter_tools
-        # writes it during pub get with developer-machine paths and it is
-        # gitignored, so a clean checkout ships none — but the Flutter Gradle
-        # plugin loader includeBuild()s every android plugin from the paths it
-        # records. Synthesized from package_config.json (Nix store roots) +
-        # each package's pubspec + pubspec.lock.
-        rm -f .flutter-plugins-dependencies
-        ${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3 \
-          ${./generate-flutter-plugins.py} "${flutterSdk.version}"
-        # flutter build --no-pub never regenerates GeneratedPluginRegistrant.java for
-        # release mode, so a debug-style registrant still references dev-dependency
-        # plugins (e.g. integration_test) that the Flutter Gradle plugin excludes from
-        # release variants — javac then fails with "package does not exist". Strip
-        # dev-dependency registrations, mirroring flutter's own release-mode regen.
-        ${pkgs.python3}/bin/python3 ${./strip-dev-deps.py}
-        # Gradle 9+ requires every included project's projectDirectory to be
-        # writable, but android plugin paths point into the read-only store.
-        # Copy android plugin packages to a writable dir and rewrite their
-        # entries in .flutter-plugins-dependencies.
-        ${pkgs.python3}/bin/python3 ${./relocate-plugins.py} \
-          .flutter-plugins-dependencies "$NIX_BUILD_TOP/plugin-copies"
-        # Preflight: flutter_tools' PubDependencies artifact check runs an ONLINE
-        # pub get for the tool itself (even under --no-pub) when the SDK ships no
-        # resolved packages/flutter_tools/.dart_tool/package_config.json — raw
-        # Google-tarball SDKs don't. Fail fast with an actionable message instead
-        # of an opaque "Got socket error trying to find package test" later.
-        ${pkgs.python3}/bin/python3 ${./check-flutter-sdk.py} "${flutterSdk}"
-        # NOTE: gradle.baseGradleFlags contains Gradle-specific flags (--no-daemon,
-        # --no-configuration-cache, --init-script) that flutter build does NOT accept.
-        # The init script is auto-loaded from $GRADLE_USER_HOME/init.d/. --no-pub skips
-        # pub get since PUB_CACHE is already populated.
-        flutter build appbundle --no-pub ${lib.escapeShellArgs flutterBuildArgs}
-        runHook postBuild
+                runHook preBuild
+                export GRADLE_USER_HOME=$(mktemp -d)
+                mkdir -p "$GRADLE_USER_HOME/init.d"
+                cp ${gradle.initScript} "$GRADLE_USER_HOME/init.d/gradle2nix-flutter.gradle"
+                # Bypass the Gradle wrapper download by replacing gradlew with a direct invocation
+                # of the Nix-provided Gradle. The wrapper would otherwise try to download its
+                # distribution from services.gradle.org, which is blocked in the Nix sandbox.
+                # rm -f: works whether or not the app ships a gradlew (read-only from the store).
+                rm -f android/gradlew
+                cat > android/gradlew << 'GRADLEW_EOF'
+        #!/bin/sh
+        exec ${gradlePackage}/bin/gradle --offline "$@"
+        GRADLEW_EOF
+                chmod +x android/gradlew
+                # Write correct local.properties so settings.gradle.kts can find flutter.sdk.
+                # The file in the source tree has developer-machine paths that don't exist here.
+                printf 'flutter.sdk=%s\nsdk.dir=%s\n' \
+                  "${flutterSdk}" "${androidSdk}/libexec/android-sdk" \
+                  > android/local.properties
+                export HOME="$NIX_BUILD_TOP"
+                # Raw-tarball Flutter SDKs keep their .git, and git refuses repos owned
+                # by another user ("dubious ownership") — which is every store path in
+                # the sandbox. Trust everything within this throwaway HOME (same
+                # workaround as buildFlutterIOSApp).
+                printf '[safe]\n\tdirectory = *\n' > "$HOME/.gitconfig"
+                # Install the Nix-generated package config so `flutter build --no-pub` resolves
+                # all Dart packages from the store without running pub. The copied pubspec.lock
+                # keeps flutter_tools' freshness check consistent with the config.
+                mkdir -p .dart_tool
+                cp ${packageConfig} .dart_tool/package_config.json
+                chmod u+w .dart_tool/package_config.json
+                install -m644 ${pubspecLockFile} pubspec.lock
+                # flutter_tools also requires .dart_tool/package_graph.json (pub >= 3.5 writes it
+                # during pub get). Generate it with the same script nixpkgs' dartConfigHook uses.
+                ${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3 \
+                  ${pkgs.path}/pkgs/build-support/dart/pub2nix/package-graph.py \
+                  > .dart_tool/package_graph.json
+                # AGP's Maven-fetched aapt2 is a prebuilt dynamically-linked binary that cannot
+                # exec inside the Nix sandbox (no /lib64 loader). Point AGP at the patched aapt2
+                # from the SDK build-tools instead — same approach as nixpkgs androidenv.
+                # $GRADLE_USER_HOME/gradle.properties is the highest-precedence project property
+                # source and applies to the Gradle build that flutter drives via gradlew.
+                # -L: the composed androidsdk is a symlink farm (build-tools/<ver> links to
+                # another store path), so find must follow symlinks to descend into it.
+                aapt2="$(find -L "$ANDROID_SDK_ROOT/build-tools" -name aapt2 -type f | head -n1)"
+                if [ -z "$aapt2" ]; then
+                  echo "ERROR: no aapt2 found under $ANDROID_SDK_ROOT/build-tools" >&2
+                  exit 1
+                fi
+                echo "android.aapt2FromMavenOverride=$aapt2" >> "$GRADLE_USER_HOME/gradle.properties"
+                # The Kotlin compile daemon dies on startup inside the Nix sandbox ("terminated
+                # unexpectedly on startup attempt #1 with error code: 0"). Run the compiler in
+                # the Gradle JVM instead. Placed here (not in the project's gradle.properties)
+                # so it reaches every build in the composite, including flutter_tools.
+                echo "kotlin.compiler.execution.strategy=in-process" >> "$GRADLE_USER_HOME/gradle.properties"
+                # Hermetically generate .flutter-plugins-dependencies: flutter_tools
+                # writes it during pub get with developer-machine paths and it is
+                # gitignored, so a clean checkout ships none — but the Flutter Gradle
+                # plugin loader includeBuild()s every android plugin from the paths it
+                # records. Synthesized from package_config.json (Nix store roots) +
+                # each package's pubspec + pubspec.lock.
+                rm -f .flutter-plugins-dependencies
+                ${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3 \
+                  ${./generate-flutter-plugins.py} "${flutterSdk.version}"
+                # flutter build --no-pub never regenerates GeneratedPluginRegistrant.java for
+                # release mode, so a debug-style registrant still references dev-dependency
+                # plugins (e.g. integration_test) that the Flutter Gradle plugin excludes from
+                # release variants — javac then fails with "package does not exist". Strip
+                # dev-dependency registrations, mirroring flutter's own release-mode regen.
+                ${pkgs.python3}/bin/python3 ${./strip-dev-deps.py}
+                # Gradle 9+ requires every included project's projectDirectory to be
+                # writable, but android plugin paths point into the read-only store.
+                # Copy android plugin packages to a writable dir and rewrite their
+                # entries in .flutter-plugins-dependencies.
+                ${pkgs.python3}/bin/python3 ${./relocate-plugins.py} \
+                  .flutter-plugins-dependencies "$NIX_BUILD_TOP/plugin-copies"
+                # Preflight: flutter_tools' PubDependencies artifact check runs an ONLINE
+                # pub get for the tool itself (even under --no-pub) when the SDK ships no
+                # resolved packages/flutter_tools/.dart_tool/package_config.json — raw
+                # Google-tarball SDKs don't. Fail fast with an actionable message instead
+                # of an opaque "Got socket error trying to find package test" later.
+                ${pkgs.python3}/bin/python3 ${./check-flutter-sdk.py} "${flutterSdk}"
+                # NOTE: gradle.baseGradleFlags contains Gradle-specific flags (--no-daemon,
+                # --no-configuration-cache, --init-script) that flutter build does NOT accept.
+                # The init script is auto-loaded from $GRADLE_USER_HOME/init.d/. --no-pub skips
+                # pub get since PUB_CACHE is already populated.
+                flutter build appbundle --no-pub ${lib.escapeShellArgs flutterBuildArgs}
+                runHook postBuild
       '';
       installPhase = ''
         runHook preInstall

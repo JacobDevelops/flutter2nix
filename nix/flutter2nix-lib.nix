@@ -35,20 +35,28 @@ let
   #   signing         — null (unsigned) or { teamId, identity, profileSpecifier, ios2nix? }
   #   exportOptions   — path to ExportOptions.plist (required if signing != null)
   buildFlutterIOSApp =
-    { pkgs
-    , src
-    , name ? pubLib.pubspecName src
-    , lockFile ? src + "/flutter2nix.lock"
-    , pubspecLockFile ? src + "/pubspec.lock"
-    , gitHashes ? { }
-    , flutterSdk ? pkgs.flutter
-    , signing ? null
-    , exportOptions ? null
-    , ...
+    {
+      pkgs,
+      src,
+      name ? pubLib.pubspecName src,
+      lockFile ? src + "/flutter2nix.lock",
+      pubspecLockFile ? src + "/pubspec.lock",
+      gitHashes ? { },
+      flutterSdk ? pkgs.flutter,
+      signing ? null,
+      exportOptions ? null,
+      ...
     }:
     let
       packageConfig = pubLib.pubPackageConfig {
-        inherit pkgs name src pubspecLockFile gitHashes flutterSdk;
+        inherit
+          pkgs
+          name
+          src
+          pubspecLockFile
+          gitHashes
+          flutterSdk
+          ;
       };
       podsSandbox = iosLib.buildPodsSandbox pkgs (iosLib.readPods lockFile);
     in
@@ -56,8 +64,29 @@ let
       inherit name src;
       __noChroot = true;
       meta.platforms = lib.platforms.darwin;
-      buildInputs = [ pkgs.cocoapods flutterSdk ]
-        ++ lib.optionals (signing != null) [ (signing.ios2nix or pkgs.ios2nix) ];
+      # Surface the network-bound offline layers (the CocoaPods sandbox and the
+      # pub package set) so consumers can cache them independently of the app.
+      # They are *build* inputs, absent from the .app/.ipa runtime closure, so a
+      # plain `nix copy <app>` never carries them and a downstream rebuild
+      # re-fetches them. These are the exact derivations the build consumes.
+      passthru = {
+        inherit packageConfig podsSandbox;
+        offlineDeps = pkgs.linkFarm "${name}-offline-deps" [
+          {
+            name = "pods-sandbox";
+            path = podsSandbox;
+          }
+          {
+            name = "package-config";
+            path = packageConfig;
+          }
+        ];
+      };
+      buildInputs = [
+        pkgs.cocoapods
+        flutterSdk
+      ]
+      ++ lib.optionals (signing != null) [ (signing.ios2nix or pkgs.ios2nix) ];
       buildPhase = ''
         runHook preBuild
         export HOME="$NIX_BUILD_TOP"
@@ -179,33 +208,38 @@ let
         )
         # NOTE: the sanitized PATH values below must stay in sync with SANITIZED_PATH in crates/ios2nix/src/xcode/env.rs.
 
-        ${if signing != null then ''
-          "''${sanitized_env[@]}" xcodebuild \
-            "''${xcodebuild_args[@]}" \
-            DEVELOPMENT_TEAM="${signing.teamId}" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="${signing.identity}" \
-            PROVISIONING_PROFILE_SPECIFIER="${signing.profileSpecifier}" \
-            OTHER_CODE_SIGN_FLAGS="--keychain $IOS2NIX_KEYCHAIN_PATH" \
-            HOME="$HOME" \
-            PATH="$NIX_BUILD_TOP/shims:/usr/bin:/bin:/usr/sbin:/sbin" \
-            archive -archivePath "$NIX_BUILD_TOP/app.xcarchive"
+        ${
+          if signing != null then
+            ''
+              "''${sanitized_env[@]}" xcodebuild \
+                "''${xcodebuild_args[@]}" \
+                DEVELOPMENT_TEAM="${signing.teamId}" \
+                CODE_SIGN_STYLE=Manual \
+                CODE_SIGN_IDENTITY="${signing.identity}" \
+                PROVISIONING_PROFILE_SPECIFIER="${signing.profileSpecifier}" \
+                OTHER_CODE_SIGN_FLAGS="--keychain $IOS2NIX_KEYCHAIN_PATH" \
+                HOME="$HOME" \
+                PATH="$NIX_BUILD_TOP/shims:/usr/bin:/bin:/usr/sbin:/sbin" \
+                archive -archivePath "$NIX_BUILD_TOP/app.xcarchive"
 
-          # Export the archive to IPA.
-          env -i HOME="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-            IOS2NIX_KEYCHAIN_PATH="$IOS2NIX_KEYCHAIN_PATH" \
-            xcodebuild -exportArchive \
-            -archivePath "$NIX_BUILD_TOP/app.xcarchive" \
-            -exportOptionsPlist "${exportOptions}" \
-            -exportPath "$NIX_BUILD_TOP/export"
-        '' else ''
-          "''${sanitized_env[@]}" xcodebuild \
-            "''${xcodebuild_args[@]}" \
-            CODE_SIGNING_ALLOWED=NO \
-            HOME="$HOME" \
-            PATH="$NIX_BUILD_TOP/shims:/usr/bin:/bin:/usr/sbin:/sbin" \
-            build
-        ''}
+              # Export the archive to IPA.
+              env -i HOME="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+                IOS2NIX_KEYCHAIN_PATH="$IOS2NIX_KEYCHAIN_PATH" \
+                xcodebuild -exportArchive \
+                -archivePath "$NIX_BUILD_TOP/app.xcarchive" \
+                -exportOptionsPlist "${exportOptions}" \
+                -exportPath "$NIX_BUILD_TOP/export"
+            ''
+          else
+            ''
+              "''${sanitized_env[@]}" xcodebuild \
+                "''${xcodebuild_args[@]}" \
+                CODE_SIGNING_ALLOWED=NO \
+                HOME="$HOME" \
+                PATH="$NIX_BUILD_TOP/shims:/usr/bin:/bin:/usr/sbin:/sbin" \
+                build
+            ''
+        }
 
         runHook postBuild
       '';
@@ -213,15 +247,20 @@ let
         runHook preInstall
         mkdir -p $out
 
-        ${if signing != null then ''
-          # Copy IPA from export
-          for ipa in "$NIX_BUILD_TOP"/export/*.ipa; do
-            [ -e "$ipa" ] && cp "$ipa" $out/
-          done
-        '' else ''
-          # Copy unsigned .app
-          cp -R "$NIX_BUILD_TOP/DerivedData/Build/Products/Release-iphoneos/"*.app $out/
-        ''}
+        ${
+          if signing != null then
+            ''
+              # Copy IPA from export
+              for ipa in "$NIX_BUILD_TOP"/export/*.ipa; do
+                [ -e "$ipa" ] && cp "$ipa" $out/
+              done
+            ''
+          else
+            ''
+              # Copy unsigned .app
+              cp -R "$NIX_BUILD_TOP/DerivedData/Build/Products/Release-iphoneos/"*.app $out/
+            ''
+        }
 
         runHook postInstall
       '';
@@ -248,31 +287,42 @@ let
   #
   # Returns an attrset with keys for each built platform (e.g., { android = drv; ios = drv; })
   buildFlutterApp =
-    { pkgs
-    , src
-    , name ? pubLib.pubspecName src
-    , lockFile ? src + "/flutter2nix.lock"
-    , platforms ? [ "android" "ios" ]
-    , androidSdk ? null
-    , signing ? null
-    , ...
+    {
+      pkgs,
+      src,
+      name ? pubLib.pubspecName src,
+      lockFile ? src + "/flutter2nix.lock",
+      platforms ? [
+        "android"
+        "ios"
+      ],
+      androidSdk ? null,
+      signing ? null,
+      ...
     }@args:
     let
       lock =
-        if builtins.pathExists lockFile
-        then builtins.fromJSON (builtins.readFile lockFile)
-        else throw "buildFlutterApp: lockfile ${toString lockFile} not found — run `flutter2nix lock` in the app root or pass lockFile explicitly";
+        if builtins.pathExists lockFile then
+          builtins.fromJSON (builtins.readFile lockFile)
+        else
+          throw "buildFlutterApp: lockfile ${toString lockFile} not found — run `flutter2nix lock` in the app root or pass lockFile explicitly";
       wantsAndroid = builtins.elem "android" platforms;
       wantsIos = builtins.elem "ios" platforms;
 
       # Throw for missing lockfile sections (before host-capability filtering).
       _sectionCheck =
-        (if wantsAndroid && !(lock ? android)
-         then throw "buildFlutterApp: lockfile ${toString lockFile} has no 'android' section"
-         else [ ])
-        ++ (if wantsIos && !(lock ? ios)
-            then throw "buildFlutterApp: lockfile ${toString lockFile} has no 'ios' section"
-            else [ ]);
+        (
+          if wantsAndroid && !(lock ? android) then
+            throw "buildFlutterApp: lockfile ${toString lockFile} has no 'android' section"
+          else
+            [ ]
+        )
+        ++ (
+          if wantsIos && !(lock ? ios) then
+            throw "buildFlutterApp: lockfile ${toString lockFile} has no 'ios' section"
+          else
+            [ ]
+        );
 
       canBuildAndroid = pkgs.stdenv.isLinux && androidSdk != null;
       canBuildIos = pkgs.stdenv.isDarwin;
@@ -283,30 +333,50 @@ let
         flutterSdk = args.flutterSdk or pkgs.flutter;
       };
 
-      androidDrv = androidLib.buildFlutterAndroidApp (passThrough // {
-        inherit pkgs name src lockFile androidSdk;
-        jdk = args.jdk or pkgs.jdk17;
-        flutterBuildArgs = args.flutterBuildArgs or [];
-      }
-      # Only forward an explicit gradlePackage: when absent,
-      # buildFlutterAndroidApp autodetects from gradle-wrapper.properties.
-      // lib.optionalAttrs (args ? gradlePackage) { inherit (args) gradlePackage; });
+      androidDrv = androidLib.buildFlutterAndroidApp (
+        passThrough
+        // {
+          inherit
+            pkgs
+            name
+            src
+            lockFile
+            androidSdk
+            ;
+          jdk = args.jdk or pkgs.jdk17;
+          flutterBuildArgs = args.flutterBuildArgs or [ ];
+        }
+        # Only forward an explicit gradlePackage: when absent,
+        # buildFlutterAndroidApp autodetects from gradle-wrapper.properties.
+        // lib.optionalAttrs (args ? gradlePackage) { inherit (args) gradlePackage; }
+      );
 
-      iosDrv = buildFlutterIOSApp (passThrough // {
-        inherit pkgs name src lockFile signing;
-        exportOptions = args.exportOptions or null;
-      });
+      iosDrv = buildFlutterIOSApp (
+        passThrough
+        // {
+          inherit
+            pkgs
+            name
+            src
+            lockFile
+            signing
+            ;
+          exportOptions = args.exportOptions or null;
+        }
+      );
 
-      result = { }
+      result =
+        { }
         // lib.optionalAttrs (wantsAndroid && canBuildAndroid) { android = androidDrv; }
         // lib.optionalAttrs (wantsIos && canBuildIos) { ios = iosDrv; };
     in
     # seq forces _sectionCheck to be evaluated (even though its result is discarded),
     # ensuring missing lockfile sections throw at eval time rather than being lazily ignored.
     builtins.seq _sectionCheck (
-      if result == { }
-      then throw "buildFlutterApp: no requested platforms (${lib.concatStringsSep ", " platforms}) can be built on ${pkgs.stdenv.hostPlatform.system}"
-      else result
+      if result == { } then
+        throw "buildFlutterApp: no requested platforms (${lib.concatStringsSep ", " platforms}) can be built on ${pkgs.stdenv.hostPlatform.system}"
+      else
+        result
     );
 
 in
