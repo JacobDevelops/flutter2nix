@@ -181,7 +181,61 @@ let
       '';
     };
 
+  # Out-of-build iOS signer: the iOS analog of signAndroidAab. Takes an UNSIGNED
+  # .xcarchive (e.g. `nix build .#mobile-ios`, which is hermetic and secret-free)
+  # and produces a signed .ipa in a normal process, so the distribution
+  # certificate and provisioning profile never enter the Nix store.
+  #
+  # Wraps the ios2nix CLI: `sign-setup` makes a throwaway keychain, imports the
+  # p12 + profile, and adds the keychain to the search list; `export` then runs
+  # `xcodebuild -exportArchive`, which re-signs every bundle using the
+  # ExportOptions.plist. Invoke as:
+  #
+  #   IOS2NIX_P12_PATH=dist.p12 IOS2NIX_P12_PASSWORD=… \
+  #   IOS2NIX_PROFILE_PATH=app.mobileprovision IOS2NIX_KEYCHAIN_PASSWORD=… \
+  #     flutter2nix-sign-ios <unsigned.xcarchive> <ExportOptions.plist> <out-dir>
+  signIosArchive =
+    {
+      pkgs,
+      ios2nix ? pkgs.ios2nix,
+    }:
+    pkgs.writeShellApplication {
+      name = "flutter2nix-sign-ios";
+      runtimeInputs = [ ios2nix ];
+      text = ''
+        archive="''${1:?usage: flutter2nix-sign-ios <unsigned.xcarchive> <ExportOptions.plist> <out-dir>}"
+        export_opts="''${2:?usage: flutter2nix-sign-ios <unsigned.xcarchive> <ExportOptions.plist> <out-dir>}"
+        out_dir="''${3:?usage: flutter2nix-sign-ios <unsigned.xcarchive> <ExportOptions.plist> <out-dir>}"
+        : "''${IOS2NIX_P12_PATH:?IOS2NIX_P12_PATH (path to .p12 distribution cert) must be set}"
+        : "''${IOS2NIX_P12_PASSWORD:?IOS2NIX_P12_PASSWORD must be set}"
+        : "''${IOS2NIX_PROFILE_PATH:?IOS2NIX_PROFILE_PATH (path to .mobileprovision) must be set}"
+        : "''${IOS2NIX_KEYCHAIN_PASSWORD:?IOS2NIX_KEYCHAIN_PASSWORD must be set}"
+
+        # nix-built archives live read-only in the store; copy to a writable
+        # scratch dir so -exportArchive can re-sign bundles without EACCES.
+        work="$(mktemp -d)"
+        cp -R "$archive" "$work/app.xcarchive"
+        chmod -R u+w "$work/app.xcarchive"
+
+        keychain="$(ios2nix sign-setup --p12 "$IOS2NIX_P12_PATH" --profile "$IOS2NIX_PROFILE_PATH")"
+        trap 'security delete-keychain "$keychain" 2>/dev/null || true; rm -rf "$work"' EXIT
+
+        mkdir -p "$out_dir"
+        ios2nix export \
+          --archive-path "$work/app.xcarchive" \
+          --export-opts-plist "$export_opts" \
+          --output-path "$out_dir"
+        echo "flutter2nix: exported signed .ipa to $out_dir"
+      '';
+    };
+
 in
 {
-  inherit readPods splitGitUrl buildPodsSandbox buildIOSApp;
+  inherit
+    readPods
+    splitGitUrl
+    buildPodsSandbox
+    buildIOSApp
+    signIosArchive
+    ;
 }

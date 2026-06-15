@@ -18,11 +18,12 @@ let
   # When signing is provided: builds a signed archive and exports to .ipa using
   # exportOptions. The signing attrset has the shape { teamId, identity, profileSpecifier, ios2nix? }.
   #
-  # KNOWN LIMITATION: asset catalogs and storyboards cannot compile in a Nix
-  # derivation — actool/ibtool spawn XPC helpers that resolve the build user's
-  # passwd home (/var/empty) and need a CoreSimulator user context. Only viable
-  # for storyboard/catalog-free apps; apps with asset catalogs or real CocoaPods
-  # must use the ios2nix CLI pipeline (see plan 4 §2a).
+  # Asset catalogs (app-icon sets) DO compile in a Nix derivation here: actool
+  # renders per-device icon variants via CoreSimulatorService, which resolves
+  # its device-set path from the build user's passwd home (/var/empty, read-only)
+  # — neither HOME nor CORE_SIMULATOR_DEVICE_SET_PATH overrides it, but
+  # CoreFoundation's CFFIXED_USER_HOME does (set in the build phase below).
+  # Storyboards (ibtool) are not exercised by Flutter apps and remain untested.
   #
   # Parameters:
   #   pkgs            — nixpkgs attribute set
@@ -34,6 +35,23 @@ let
   #   flutterSdk      — Flutter SDK (default: pkgs.flutter)
   #   signing         — null (unsigned) or { teamId, identity, profileSpecifier, ios2nix? }
   #   exportOptions   — path to ExportOptions.plist (required if signing != null)
+  #   dartDefines     — list of "KEY=VALUE" --dart-define strings. xcodebuild is
+  #                     driven directly (not `flutter build ios`), so these are
+  #                     encoded into Generated.xcconfig's DART_DEFINES exactly as
+  #                     `flutter build` would; xcode_backend.sh forwards them to
+  #                     `flutter assemble`. Release builds reading
+  #                     String.fromEnvironment(...) get empty values otherwise.
+  #   produceArchive  — when signing is null, emit an unsigned .xcarchive
+  #                     ($out/Runner.xcarchive) instead of a bare .app. This is
+  #                     the input to an out-of-build signer (sign + export to .ipa
+  #                     in a normal process, so signing secrets never enter the
+  #                     store) — the iOS analog of an unsigned Android .aab.
+  #   scheme          — Xcode scheme to build (default "Runner"). Flutter flavors
+  #                     create a scheme per flavor (e.g. "stag"); pass it here.
+  #   configuration   — Xcode build configuration (default "Release"). Flavored
+  #                     apps use "Release-<flavor>" (e.g. "Release-stag"); this
+  #                     drives flavor-keyed build phases (e.g. the per-flavor
+  #                     GoogleService-Info copy script).
   buildFlutterIOSApp =
     {
       pkgs,
@@ -45,6 +63,10 @@ let
       flutterSdk ? pkgs.flutter,
       signing ? null,
       exportOptions ? null,
+      dartDefines ? [ ],
+      produceArchive ? false,
+      scheme ? "Runner",
+      configuration ? "Release",
       ...
     }:
     let
@@ -126,6 +148,21 @@ let
           printf 'PACKAGE_CONFIG=.dart_tool/package_config.json\n'
         } > ios/Flutter/Generated.xcconfig
 
+        # Inject --dart-define values the way `flutter build` does: DART_DEFINES
+        # is a comma-separated list of base64(KEY=VALUE) that xcode_backend.sh
+        # reads from Generated.xcconfig and forwards to `flutter assemble`.
+        # Without it, release builds reading String.fromEnvironment(...) get
+        # empty values (e.g. API_BASE_URL → blank screen on first build).
+        dart_defines=(${lib.concatStringsSep " " (map lib.escapeShellArg dartDefines)})
+        if [ "''${#dart_defines[@]}" -gt 0 ]; then
+          encoded=""
+          for d in "''${dart_defines[@]}"; do
+            enc=$(printf '%s' "$d" | base64 | tr -d '\n')
+            encoded="''${encoded:+$encoded,}$enc"
+          done
+          printf 'DART_DEFINES=%s\n' "$encoded" >> ios/Flutter/Generated.xcconfig
+        fi
+
         # Hermetically generate .flutter-plugins-dependencies: flutter_tools
         # writes it during pub get with developer-machine paths and it is
         # gitignored, so a clean checkout ships none — but CocoaPods' podhelper
@@ -168,10 +205,21 @@ let
         SHIM
         chmod +x "$NIX_BUILD_TOP/shims/codesign"
 
+        # CFFIXED_USER_HOME: unblocks CompileAssetCatalog for apps with an
+        # app-icon set. actool renders per-device icon variants via
+        # CoreSimulatorService, which resolves its SimDeviceSet path from the
+        # build user's *passwd* home (/var/empty for nix build users, read-only)
+        # — HOME and CORE_SIMULATOR_DEVICE_SET_PATH do NOT override it, but
+        # CoreFoundation's CFFIXED_USER_HOME does. Point it at a writable tree
+        # with the IB Support dir pre-created; actool then compiles Assets.car
+        # (a residual CoreSimulator/Devices ENOMEM line in the log is non-fatal).
+        mkdir -p "$NIX_BUILD_TOP/cfhome/Library/Developer/Xcode/UserData/IB Support/Simulator Devices"
+
         # LANG: CocoaPods (Ruby) needs a UTF-8 locale or unicode_normalize
         # dies on ASCII-8BIT paths.
         sanitized_env=(env -i
           HOME="$HOME"
+          CFFIXED_USER_HOME="$NIX_BUILD_TOP/cfhome"
           LANG=en_US.UTF-8
           LC_ALL=en_US.UTF-8
           PATH="$NIX_BUILD_TOP/shims:${flutterSdk}/bin:${pkgs.cocoapods}/bin:/usr/bin:/bin:/usr/sbin:/sbin")
@@ -190,19 +238,14 @@ let
         # Build: either unsigned (build) or signed (archive).
         # Common xcodebuild args are built once to avoid duplication; each branch appends
         # signing-specific flags and the final action arg.
-        # KNOWN LIMITATION (Xcode 26): asset catalogs containing app icon sets
-        # make actool/ibtoold query CoreSimulatorService for per-device icon
-        # rendering ("Failed to find a suitable device for IBSimDeviceTypeiPad3x").
-        # The service resolves its device set via the build user's passwd HOME
-        # (/var/empty) and nix build users cannot reach it — the build fails in
-        # CompileAssetCatalogVariant. No xcodebuild setting avoids the query
-        # (ENABLE_ON_DEMAND_RESOURCES=NO was tried; the thinned variant still
-        # compiles). Until solved, iOS apps with asset catalogs must build
-        # outside nix-build (the ios2nix CLI / fnx bench ios-build path).
+        # Asset catalogs with app-icon sets compile in nix-build thanks to the
+        # CFFIXED_USER_HOME shim set in sanitized_env above (see that comment);
+        # it is also passed as a build setting below so XCBBuildService's
+        # CompileAssetCatalog task inherits it.
         xcodebuild_args=(
           -workspace "ios/Runner.xcworkspace"
-          -scheme "Runner"
-          -configuration "Release"
+          -scheme "${scheme}"
+          -configuration "${configuration}"
           -destination 'generic/platform=iOS'
           -derivedDataPath "$NIX_BUILD_TOP/DerivedData"
         )
@@ -219,6 +262,7 @@ let
                 PROVISIONING_PROFILE_SPECIFIER="${signing.profileSpecifier}" \
                 OTHER_CODE_SIGN_FLAGS="--keychain $IOS2NIX_KEYCHAIN_PATH" \
                 HOME="$HOME" \
+                CFFIXED_USER_HOME="$NIX_BUILD_TOP/cfhome" \
                 PATH="$NIX_BUILD_TOP/shims:/usr/bin:/bin:/usr/sbin:/sbin" \
                 archive -archivePath "$NIX_BUILD_TOP/app.xcarchive"
 
@@ -230,12 +274,28 @@ let
                 -exportOptionsPlist "${exportOptions}" \
                 -exportPath "$NIX_BUILD_TOP/export"
             ''
+          else if produceArchive then
+            ''
+              # Unsigned archive: the input to an out-of-build signer. Code
+              # signing is disabled here (no secrets in the store); the signer
+              # re-signs every bundle during `xcodebuild -exportArchive`.
+              "''${sanitized_env[@]}" xcodebuild \
+                "''${xcodebuild_args[@]}" \
+                CODE_SIGNING_ALLOWED=NO \
+                CODE_SIGNING_REQUIRED=NO \
+                CODE_SIGN_IDENTITY="" \
+                HOME="$HOME" \
+                CFFIXED_USER_HOME="$NIX_BUILD_TOP/cfhome" \
+                PATH="$NIX_BUILD_TOP/shims:/usr/bin:/bin:/usr/sbin:/sbin" \
+                archive -archivePath "$NIX_BUILD_TOP/app.xcarchive"
+            ''
           else
             ''
               "''${sanitized_env[@]}" xcodebuild \
                 "''${xcodebuild_args[@]}" \
                 CODE_SIGNING_ALLOWED=NO \
                 HOME="$HOME" \
+                CFFIXED_USER_HOME="$NIX_BUILD_TOP/cfhome" \
                 PATH="$NIX_BUILD_TOP/shims:/usr/bin:/bin:/usr/sbin:/sbin" \
                 build
             ''
@@ -255,10 +315,15 @@ let
                 [ -e "$ipa" ] && cp "$ipa" $out/
               done
             ''
+          else if produceArchive then
+            ''
+              # Copy the unsigned archive (the out-of-build signer's input).
+              cp -R "$NIX_BUILD_TOP/app.xcarchive" "$out/Runner.xcarchive"
+            ''
           else
             ''
               # Copy unsigned .app
-              cp -R "$NIX_BUILD_TOP/DerivedData/Build/Products/Release-iphoneos/"*.app $out/
+              cp -R "$NIX_BUILD_TOP/DerivedData/Build/Products/${configuration}-iphoneos/"*.app $out/
             ''
         }
 
@@ -283,6 +348,14 @@ let
   #                     from the app's gradle-wrapper.properties)
   #   signing         — null or signing config for iOS (passed to buildFlutterIOSApp)
   #   exportOptions   — path to ExportOptions.plist (passed to buildFlutterIOSApp)
+  #   dartDefines     — list of "KEY=VALUE" --dart-define strings for iOS
+  #                     (passed to buildFlutterIOSApp; see there)
+  #   produceArchive  — emit an unsigned iOS .xcarchive instead of a .app
+  #                     (passed to buildFlutterIOSApp; see there)
+  #   scheme          — Xcode scheme for iOS (default "Runner"; e.g. a flavor
+  #                     scheme like "stag"). Passed to buildFlutterIOSApp.
+  #   configuration   — Xcode build configuration for iOS (default "Release";
+  #                     e.g. "Release-stag"). Passed to buildFlutterIOSApp.
   #   ...             — other parameters passed through to the platform builders
   #
   # Returns an attrset with keys for each built platform (e.g., { android = drv; ios = drv; })
@@ -362,6 +435,10 @@ let
             signing
             ;
           exportOptions = args.exportOptions or null;
+          dartDefines = args.dartDefines or [ ];
+          produceArchive = args.produceArchive or false;
+          scheme = args.scheme or "Runner";
+          configuration = args.configuration or "Release";
         }
       );
 
