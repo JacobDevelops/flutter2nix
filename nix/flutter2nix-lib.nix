@@ -130,6 +130,21 @@ let
           ${pkgs.path}/pkgs/build-support/dart/pub2nix/package-graph.py \
           > .dart_tool/package_graph.json
 
+        # Derive the build name/number from pubspec.yaml exactly as `flutter
+        # build` does (`version: <name>+<number>`). The iOS path drives xcodebuild
+        # directly rather than `flutter build`, so without this
+        # CFBundleShortVersionString/CFBundleVersion fall back to a hardcoded
+        # placeholder regardless of pubspec — shipping the wrong version to
+        # TestFlight. A bare name with no '+<number>' uses flutter's default of 1.
+        flutter_version=$(grep -E '^version:' pubspec.yaml | head -1 \
+          | sed 's/^version:[[:space:]]*//; s/[[:space:]]*$//')
+        flutter_build_name="''${flutter_version%%+*}"
+        flutter_build_number="''${flutter_version##*+}"
+        if [ "$flutter_build_number" = "$flutter_version" ] || [ -z "$flutter_build_number" ]; then
+          flutter_build_number=1
+        fi
+        [ -n "$flutter_build_name" ] || flutter_build_name=1.0.0
+
         # Flutter's CocoaPods integration reads FLUTTER_ROOT from this
         # generated file; it is machine-specific and gitignored, so synthesize
         # it for the sandbox copy.
@@ -140,8 +155,8 @@ let
           printf 'COCOAPODS_PARALLEL_CODE_SIGN=true\n'
           printf 'FLUTTER_TARGET=lib/main.dart\n'
           printf 'FLUTTER_BUILD_DIR=build\n'
-          printf 'FLUTTER_BUILD_NAME=1.0.0\n'
-          printf 'FLUTTER_BUILD_NUMBER=1\n'
+          printf 'FLUTTER_BUILD_NAME=%s\n' "$flutter_build_name"
+          printf 'FLUTTER_BUILD_NUMBER=%s\n' "$flutter_build_number"
           printf 'DART_OBFUSCATION=false\n'
           printf 'TRACK_WIDGET_CREATION=true\n'
           printf 'TREE_SHAKE_ICONS=false\n'
