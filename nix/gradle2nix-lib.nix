@@ -664,6 +664,33 @@ in
           echo "  Expected artifacts under: build/app/outputs/bundle/<variant>Release/" >&2
           exit 1
         fi
+        # Deploy-time deobfuscation/symbolication upload artifacts. These are NOT
+        # part of the app's runtime closure and are emitted only when the relevant
+        # build flags are set, so every copy below is guarded and never fails an
+        # ordinary (non-minified / non-obfuscated) build:
+        #   * mapping/        — R8's mapping.txt (+ seeds/usage/configuration/
+        #                       resources .txt) from build/app/outputs/mapping/
+        #                       <flavor>Release/. Uploaded to the Play Console and
+        #                       Crashlytics so release crash stacks de-minify.
+        #                       Present only when isMinifyEnabled (R8) is on.
+        #   * debug-symbols/  — Dart split-debug-info symbol files
+        #                       (app.android-*.symbols) for `flutter symbolize` of
+        #                       obfuscated Dart stack traces. Present only when the
+        #                       build passes --obfuscate --split-debug-info=<dir>.
+        # The AAB/APK-at-$out-root layout above is left untouched (CI greps
+        # result/ for *.aab); these land in dedicated subdirs alongside it.
+        mappingDir="$(find . -type d -ipath "*outputs/mapping/*release*" 2>/dev/null | head -n1)"
+        if [ -n "$mappingDir" ] && [ -d "$mappingDir" ]; then
+          mkdir -p $out/mapping
+          cp -R "$mappingDir"/. $out/mapping/
+        fi
+        # --split-debug-info=build/debug-symbols (see infra/nix/mobile-android.nix)
+        # writes app.android-*.symbols here, relative to the flutter build cwd
+        # (the unpacked source root), which is also the installPhase cwd.
+        if [ -n "$(find build/debug-symbols -type f 2>/dev/null)" ]; then
+          mkdir -p $out/debug-symbols
+          cp -R build/debug-symbols/. $out/debug-symbols/
+        fi
         runHook postInstall
       '';
     };
