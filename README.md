@@ -147,6 +147,32 @@ flutter2nix.lib.buildFlutterAndroidApp {
 }
 ```
 
+### `consolidateMavenRepo` (cold-CI transfer opt-in)
+
+By default the offline Maven repo **symlinks** each fetched artifact, so its Nix
+closure is ~2900 content-addressed store paths. That dedupes across lockfile
+versions and projects and lets a warm builder transfer only the paths that
+actually changed on a dep bump — the right default for persistent builders.
+
+On an **ephemeral CI runner** (cold store every run) that same shape costs ~2900
+individual object GETs from the binary cache — minutes of per-object latency even
+though every path is a cache hit. Set `consolidateMavenRepo = true;` to copy every
+artifact into a **single** store path, so the whole repo substitutes as one NAR in
+one request:
+
+```nix
+flutter2nix.lib.buildFlutterApp {
+  inherit pkgs src androidSdk;
+  consolidateMavenRepo = true;   # cold-runner CI; default false
+}
+```
+
+Tradeoff: a single NAR shares nothing, so each lockfile version is a full (~5.6GB)
+NAR in the store/cache and every dep bump re-pushes/re-pulls the whole closure.
+Only flip it on when your runners are ephemeral. The flag is accepted by
+`buildFlutterApp`, `buildFlutterAndroidApp`, `buildAndroidApp`, and
+`buildGradleProject`.
+
 See the doc comments in [nix/gradle2nix-lib.nix](nix/gradle2nix-lib.nix) for all
 parameters, and the `buildFlutterAndroidApp-e2e` check in [flake.nix](flake.nix)
 for a complete working example.

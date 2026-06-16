@@ -371,6 +371,17 @@ let
   #                     scheme like "stag"). Passed to buildFlutterIOSApp.
   #   configuration   — Xcode build configuration for iOS (default "Release";
   #                     e.g. "Release-stag"). Passed to buildFlutterIOSApp.
+  #   consolidateMavenRepo — Android only; default false. When false the offline
+  #                     Maven repo symlinks each fetchurl artifact (closure stays
+  #                     deduped/content-addressed across lockfile versions and
+  #                     projects; warm/persistent builders transfer only changed
+  #                     paths). Set true to copy every artifact into ONE store
+  #                     path: a clean CI runner then substitutes the whole repo as
+  #                     a single NAR instead of ~2900 per-object cache GETs. The
+  #                     win is cold-runner-only — true sacrifices dedup and
+  #                     incremental transfer (every lockfile version becomes a
+  #                     full ~5.6GB NAR), so leave it false unless your runners are
+  #                     ephemeral. Forwarded to buildFlutterAndroidApp.
   #   ...             — other parameters passed through to the platform builders
   #
   # Returns an attrset with keys for each built platform (e.g., { android = drv; ios = drv; })
@@ -386,6 +397,7 @@ let
       ],
       androidSdk ? null,
       signing ? null,
+      consolidateMavenRepo ? false,
       ...
     }@args:
     let
@@ -430,6 +442,7 @@ let
             src
             lockFile
             androidSdk
+            consolidateMavenRepo
             ;
           jdk = args.jdk or pkgs.jdk17;
           flutterBuildArgs = args.flutterBuildArgs or [ ];

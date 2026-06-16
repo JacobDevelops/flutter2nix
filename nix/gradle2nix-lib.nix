@@ -173,8 +173,15 @@ let
   # file IS the POM — no synthetic POM is generated for those entries.
   # If a node's URL ends in .module (Gradle Module Metadata), no synthetic POM
   # is generated either — Gradle reads the .module file directly via gradleMetadata().
+  #
+  # consolidate (default false): when false, fetched artifacts are SYMLINKED into
+  # the repo so the closure stays content-addressed and deduped (the default —
+  # see installArtifact below). When true, artifacts are COPIED in so the whole
+  # repo collapses into a single self-contained store path; opt in via
+  # consolidateMavenRepo for cold-runner CI where ~2900 per-object cache GETs
+  # dominate. Tradeoffs are documented on the consolidateMavenRepo flag.
   buildMavenRepo =
-    pkgs: nodes:
+    pkgs: nodes: consolidate:
     let
       entries = map (
         node:
@@ -218,14 +225,29 @@ let
       # synthetic (dep-free) stub on top, breaking transitive resolution.
       orderedEntries = (lib.filter (e: !e.isMavenPom) entries) ++ (lib.filter (e: e.isMavenPom) entries);
 
-      # Symlink fetched artifacts instead of copying: the fetchurl outputs
-      # already live in the store, so copies would double the on-disk
-      # footprint (~GBs for a real app lockfile). -f: a real .pom (processed
-      # last, see orderedEntries) replaces the synthetic stub written
-      # alongside its artifact.
+      # Places a fetched artifact into the repo. Default (consolidate=false):
+      # SYMLINK the fetchurl output — the artifact already lives in the store, so
+      # symlinking keeps the repo content-addressed and deduped (one store path
+      # per artifact, shared across lockfile versions and projects) and keeps
+      # on-disk footprint flat. -f: a real .pom (processed last, see
+      # orderedEntries) replaces the synthetic stub written alongside its
+      # artifact. consolidate=true: COPY the artifact in so the whole repo is one
+      # self-contained store path that a binary cache streams in a single NAR
+      # request — at the cost of dedup and incremental transfer (each lockfile
+      # version is now a full ~5.6GB NAR). -f + chmod u+w: the dest may already
+      # exist (the synthetic stub) and fetchurl outputs are read-only, so the
+      # copy must be made writable to allow the real-POM overwrite.
+      installArtifact =
+        e:
+        if consolidate then
+          ''
+            cp -f ${e.fetched} "$out/${e.rel}"
+            chmod u+w "$out/${e.rel}"''
+        else
+          ''ln -sfn ${e.fetched} "$out/${e.rel}"'';
       installCmds = lib.concatMapStrings (e: ''
         mkdir -p "$out/${dirOf e.rel}"
-        ln -sfn ${e.fetched} "$out/${e.rel}"
+        ${installArtifact e}
         ${lib.optionalString (e.pom != null) ''
           cat > "$out/${e.pom}" << 'POMEOF'
           ${e.pomXml}
@@ -259,11 +281,12 @@ let
       lockFile,
       jdk ? pkgs.jdk17,
       gradlePackage ? pkgs.gradle,
+      consolidateMavenRepo ? false,
       ...
     }:
     let
       nodes = readNodes lockFile;
-      mavenRepo = buildMavenRepo pkgs nodes;
+      mavenRepo = buildMavenRepo pkgs nodes consolidateMavenRepo;
       initScript = makeInitScript pkgs mavenRepo;
     in
     {
@@ -382,11 +405,12 @@ in
       jdk ? pkgs.jdk17,
       gradlePackage ? defaultGradlePackage pkgs src,
       androidSdk,
+      consolidateMavenRepo ? false,
       ...
     }:
     let
       nodes = readNodes lockFile;
-      mavenRepo = buildMavenRepo pkgs nodes;
+      mavenRepo = buildMavenRepo pkgs nodes consolidateMavenRepo;
       initScript = makeInitScript pkgs mavenRepo;
       allFlags = lib.concatStringsSep " " (
         [
@@ -480,6 +504,11 @@ in
   #                     gradle-wrapper.properties via defaultGradlePackage)
   #   androidSdk      — Android SDK from androidenv.composeAndroidPackages { }.androidsdk
   #   flutterBuildArgs — extra args for `flutter build appbundle` (e.g. ["--flavor" "stag"])
+  #   consolidateMavenRepo — default false (symlink artifacts → deduped closure).
+  #                     Set true to copy the whole offline Maven repo into a single
+  #                     store path so a cold CI runner substitutes it as one NAR
+  #                     rather than ~2900 per-object cache GETs; the tradeoff is
+  #                     lost dedup + incremental transfer (see buildMavenRepo).
   buildFlutterAndroidApp =
     {
       pkgs,
@@ -493,6 +522,7 @@ in
       gradlePackage ? defaultGradlePackage pkgs src,
       androidSdk,
       flutterBuildArgs ? [ ],
+      consolidateMavenRepo ? false,
       ...
     }:
     let
@@ -502,6 +532,7 @@ in
           lockFile
           jdk
           gradlePackage
+          consolidateMavenRepo
           ;
       };
 

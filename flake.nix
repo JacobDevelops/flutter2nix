@@ -335,6 +335,38 @@
               fi
               touch $out
             '';
+          # Opt-in counterpart to maven-repo-zero-copy: consolidateMavenRepo=true
+          # must COPY artifacts in (regular files, zero symlinks) so the repo is one
+          # self-contained store path — the cold-CI single-NAR property. Without
+          # this, the opt-in branch had no coverage (zero-copy only exercises the
+          # default symlink path).
+          maven-repo-consolidated =
+            let
+              repo =
+                (self.lib.buildGradleProject {
+                  inherit pkgs;
+                  lockFile = ./tests/fixtures/gradle/android-minimal.lock;
+                  consolidateMavenRepo = true;
+                }).mavenRepo;
+            in
+            pkgs.runCommand "maven-repo-consolidated" { } ''
+              # No symlinks anywhere: a symlink would pull a fetchurl output into the
+              # closure, defeating the single-store-path goal.
+              syms=$(find ${repo} -type l -print)
+              if [ -n "$syms" ]; then
+                echo "FAIL: symlinks in consolidated maven repo (expected copies):" >&2
+                printf '%s\n' "$syms" >&2
+                exit 1
+              fi
+              # Artifacts must be present as real files (guard against an empty repo
+              # silently passing the no-symlinks assertion).
+              files=$(find ${repo} -type f \( -name '*.jar' -o -name '*.aar' -o -name '*.module' \) -print)
+              if [ -z "$files" ]; then
+                echo "FAIL: no copied artifacts in consolidated maven repo" >&2
+                exit 1
+              fi
+              touch $out
+            '';
           # Verifies flutter2nix-format lockfile (android.nodes wrapper) works and
           # that Flutter Storage CDN artifacts (io.flutter:*) are correctly routed.
           flutter-maven-repo-test =
