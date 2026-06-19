@@ -73,4 +73,11 @@ and kind (Added / Changed / Fixed / Performance).
 - **nix-lib:** Upload-artifact step optimized; `mapping.txt` (R8/ProGuard) is
   emitted for release builds.
 
+### Documentation
+- **README:** Corrected the stale claim that iOS support was "planned but not
+  yet implemented" — `flutter2nix lock` already locks an `ios` CocoaPods section
+  when `ios/Podfile.lock` is present, and `buildFlutterIOSApp` / the
+  `buildFlutterApp` dispatcher build iOS archives on macOS. Documented the iOS
+  consumption path and linked `docs/ios-testing.md`.
+
 [Unreleased]: https://github.com/JacobDevelops/flutter2nix/commits/main
