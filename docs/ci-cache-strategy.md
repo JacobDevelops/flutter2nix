@@ -136,6 +136,9 @@ Don't guess — measure restore-dominated vs. build-dominated time:
   nix path-info -rS ./result | wc -l    # number of store paths in the closure
   ```
 
+  `benchmarks/measure-closure.sh <result> [label]` wraps these two commands into
+  one labeled line — build each mode's `result`, run it on both, and compare.
+
   Expect ~2900 paths / ~19 MB on-disk for symlink mode vs. a handful of paths /
   ~5.6 GB for consolidated. The question CI answers is whether 2900 small object
   GETs or one 5.6 GB NAR pull is faster on *your* runner — so measure restore

@@ -109,5 +109,9 @@ and kind (Added / Changed / Fixed / Performance).
   job (and pinned the `rustfmt`/`clippy` toolchain components) so formatting
   drift fails CI instead of accumulating. Existing drift across the three crates
   was normalized in the same pass.
+- **bench:** Added `benchmarks/measure-closure.sh` — a read-only, CI-runnable
+  check reporting the Nix closure size and store-path count of a build result,
+  to make the `consolidateMavenRepo` symlink-vs-consolidated tradeoff
+  data-driven. Referenced from `docs/ci-cache-strategy.md`.
 
 [Unreleased]: https://github.com/JacobDevelops/flutter2nix/commits/main
