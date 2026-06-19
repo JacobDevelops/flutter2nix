@@ -72,6 +72,17 @@ pub async fn generate_lockfile(
         None
     };
 
+    // A pubspec.yaml with neither a lockable android/ nor ios/ would produce an
+    // empty lockfile — a silent no-op that usually means the command was run
+    // outside the app root or the platform dirs are missing. Fail with a hint.
+    anyhow::ensure!(
+        android_section.is_some() || ios_section.is_some(),
+        "no lockable platforms in '{}': a Flutter app needs an android/ directory \
+         (or an ios/ with a Podfile.lock). Run `flutter2nix lock` from the app root \
+         where pubspec.yaml and android/ live.",
+        project_dir.display()
+    );
+
     Ok(crate::lockfile::FlutterLockfile {
         android: android_section,
         ios: ios_section,
@@ -101,4 +112,23 @@ pub async fn run(cmd: LockCommand) -> anyhow::Result<()> {
 
     println!("Wrote flutter2nix lockfile: {}", output_path.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn errors_when_no_lockable_platforms() {
+        let tmp = tempfile::tempdir().unwrap();
+        // pubspec.yaml present, but no android/ or ios/ → nothing to lock.
+        std::fs::write(tmp.path().join("pubspec.yaml"), "name: demo\n").unwrap();
+        let err = generate_lockfile(tmp.path(), &[], None, None, 5, 5)
+            .await
+            .expect_err("a project with no lockable platforms must error");
+        assert!(
+            err.to_string().contains("no lockable platforms"),
+            "expected 'no lockable platforms' hint, got: {err}"
+        );
+    }
 }

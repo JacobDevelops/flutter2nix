@@ -56,6 +56,10 @@ and kind (Added / Changed / Fixed / Performance).
   (`pod install` / `flutter build ios --config-only`) — previously the iOS
   section was silently omitted and only surfaced later as a confusing
   "lockfile has no 'ios' section" at build time.
+- **flutter2nix:** `flutter2nix lock`/`check` now fail with an actionable error
+  when `pubspec.yaml` exists but neither a lockable `android/` nor an `ios/`
+  (with `Podfile.lock`) is present, instead of silently writing an empty
+  lockfile — this almost always means the command was run outside the app root.
 
 ### Fixed
 - **dev-shell:** CocoaPods guarded behind `isDarwin` so the dev shell evaluates
