@@ -134,5 +134,7 @@ and kind (Added / Changed / Fixed / Performance).
   (pub-dep handling lives in `nix/pub-lib.nix`). Also dropped the now-unnecessary
   crate-level `#![allow(dead_code)]`, so future dead code is caught by the CI
   clippy gate instead of silently hidden.
+- **nix-core:** Removed the dead `codegen::pub_deps` stub (`generate_pub_entry`
+  returned an empty string with no callers).
 
 [Unreleased]: https://github.com/JacobDevelops/flutter2nix/commits/main
