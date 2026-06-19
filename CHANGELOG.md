@@ -125,4 +125,9 @@ and kind (Added / Changed / Fixed / Performance).
   to make the `consolidateMavenRepo` symlink-vs-consolidated tradeoff
   data-driven. Referenced from `docs/ci-cache-strategy.md`.
 
+### Removed
+- **flutter2nix:** Removed the dead `compose` module (`compose_lockfile` was a
+  no-op stub returning an empty string, never called — the real composition is
+  `cli::lock::generate_lockfile`).
+
 [Unreleased]: https://github.com/JacobDevelops/flutter2nix/commits/main
