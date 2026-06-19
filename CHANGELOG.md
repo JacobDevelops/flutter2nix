@@ -51,6 +51,11 @@ and kind (Added / Changed / Fixed / Performance).
   missing lockfile as `lockfile '…' not found — run the \`lock\` command to
   generate it` instead of a raw IO error, so `gradle2nix check`/`generate` and
   `ios2nix check`/`generate` all give an actionable hint.
+- **flutter2nix:** `flutter2nix lock` now warns when an `ios/` directory exists
+  but has no `Podfile.lock`, explaining that iOS was skipped and how to fix it
+  (`pod install` / `flutter build ios --config-only`) — previously the iOS
+  section was silently omitted and only surfaced later as a confusing
+  "lockfile has no 'ios' section" at build time.
 
 ### Fixed
 - **dev-shell:** CocoaPods guarded behind `isDarwin` so the dev shell evaluates

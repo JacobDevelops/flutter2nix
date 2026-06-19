@@ -58,6 +58,17 @@ pub async fn generate_lockfile(
             .with_context(|| format!("resolving iOS dependencies in '{}'", ios_dir.display()))?;
         Some(crate::lockfile::IosSection { nodes: graph.nodes })
     } else {
+        // An ios/ dir with no Podfile.lock is a realistic "haven't run pod
+        // install yet" state. Without this warning the iOS section is silently
+        // omitted and only resurfaces later as a confusing "lockfile has no
+        // 'ios' section" at build time.
+        if ios_dir.is_dir() {
+            eprintln!(
+                "warning: '{}' exists but has no Podfile.lock — skipping iOS lock; \
+                 run `pod install` (or `flutter build ios --config-only`) to generate it",
+                ios_dir.display()
+            );
+        }
         None
     };
 
