@@ -44,6 +44,9 @@ and kind (Added / Changed / Fixed / Performance).
   itself, removing required consumer boilerplate.
 - **gradle2nix-init:** Offline Maven repo is injected at the front of each
   `RepositoryHandler` so it always wins over network repositories.
+- **flutter2nix:** Reading a missing lockfile (e.g. via `flutter2nix check`) now
+  reports `lockfile '…' not found — run \`flutter2nix lock\` to generate it`
+  instead of a raw `No such file or directory` IO error.
 
 ### Fixed
 - **dev-shell:** CocoaPods guarded behind `isDarwin` so the dev shell evaluates
