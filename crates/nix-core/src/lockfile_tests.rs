@@ -83,7 +83,11 @@ fn test_read_lockfile_missing_file() {
     let result = read_lockfile(&lockfile_path);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("failed to read"));
+    // A missing lockfile must hint at the fix, not surface a raw IO error.
+    assert!(
+        err_msg.contains("not found") && err_msg.contains("`lock`"),
+        "missing-lockfile error should hint to run the `lock` command: {err_msg}"
+    );
 }
 
 #[test]

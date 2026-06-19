@@ -47,6 +47,10 @@ and kind (Added / Changed / Fixed / Performance).
 - **flutter2nix:** Reading a missing lockfile (e.g. via `flutter2nix check`) now
   reports `lockfile '…' not found — run \`flutter2nix lock\` to generate it`
   instead of a raw `No such file or directory` IO error.
+- **nix-core (gradle2nix / ios2nix):** The shared lockfile reader now reports a
+  missing lockfile as `lockfile '…' not found — run the \`lock\` command to
+  generate it` instead of a raw IO error, so `gradle2nix check`/`generate` and
+  `ios2nix check`/`generate` all give an actionable hint.
 
 ### Fixed
 - **dev-shell:** CocoaPods guarded behind `isDarwin` so the dev shell evaluates
