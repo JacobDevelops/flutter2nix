@@ -82,6 +82,12 @@ and kind (Added / Changed / Fixed / Performance).
   when `ios/Podfile.lock` is present, and `buildFlutterIOSApp` / the
   `buildFlutterApp` dispatcher build iOS archives on macOS. Documented the iOS
   consumption path and linked `docs/ios-testing.md`.
+- **docs:** Added `docs/ci-cache-strategy.md` — why the Nix binary cache is the
+  right caching layer (vs. custom `actions/cache` archives of build inputs),
+  cache classes by stability tier, xz-vs-zstd compression guidance, the
+  `consolidateMavenRepo` cold-vs-warm decision table, and reproducible commands
+  for measuring closure size / path count / substitution time. Linked from the
+  README.
 
 ### CI
 - **ci:** Replaced the hand-rolled `actions/cache` cargo cache with
