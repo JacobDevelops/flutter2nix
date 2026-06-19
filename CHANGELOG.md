@@ -60,6 +60,9 @@ and kind (Added / Changed / Fixed / Performance).
   when `pubspec.yaml` exists but neither a lockable `android/` nor an `ios/`
   (with `Podfile.lock`) is present, instead of silently writing an empty
   lockfile — this almost always means the command was run outside the app root.
+- **ios2nix:** `ios2nix lock`/`check` now report a missing `Podfile.lock` with an
+  actionable hint (`run \`pod install\` … or provide a .ios2nix-podspecs.json
+  sidecar`) instead of a raw `No such file or directory` IO error.
 
 ### Fixed
 - **dev-shell:** CocoaPods guarded behind `isDarwin` so the dev shell evaluates

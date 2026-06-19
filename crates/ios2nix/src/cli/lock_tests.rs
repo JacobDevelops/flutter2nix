@@ -19,6 +19,20 @@ fn test_lock_parse_podfile() {
 }
 
 #[tokio::test]
+async fn test_lock_missing_podfile_lock_is_actionable() {
+    // No Podfile.lock and no sidecar → an actionable error, not a raw IO error.
+    let dir = tempfile::TempDir::new().unwrap();
+    let err = build_dependency_graph(dir.path(), &[], None, 60)
+        .await
+        .expect_err("missing Podfile.lock (no sidecar) must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Podfile.lock not found") && msg.contains("pod install"),
+        "error should hint to run `pod install`: {msg}"
+    );
+}
+
+#[tokio::test]
 async fn test_lock_sidecar_excludes_path_pods() {
     let dir = tempfile::TempDir::new().unwrap();
     let sidecar = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
