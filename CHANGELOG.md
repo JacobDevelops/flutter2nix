@@ -80,4 +80,12 @@ and kind (Added / Changed / Fixed / Performance).
   `buildFlutterApp` dispatcher build iOS archives on macOS. Documented the iOS
   consumption path and linked `docs/ios-testing.md`.
 
+### CI
+- **ci:** Replaced the hand-rolled `actions/cache` cargo cache with
+  `Swatinem/rust-cache@v2`, which keys on the toolchain + `Cargo.lock`, restores
+  with prefix fallback (partial reuse when the lockfile changes), and prunes and
+  re-saves `target/` on every successful run. The previous cache keyed `target/`
+  solely on the `Cargo.lock` hash with no `restore-keys`, so a lockfile change
+  meant a fully cold build and an unchanged lockfile never refreshed `target/`.
+
 [Unreleased]: https://github.com/JacobDevelops/flutter2nix/commits/main
