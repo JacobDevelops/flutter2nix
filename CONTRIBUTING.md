@@ -3,18 +3,29 @@
 ## Prerequisites
 
 - [Nix](https://nixos.org/download/) with flakes enabled
-- Rust stable (provided by the dev shell)
+- [devenv](https://devenv.sh/) + [direnv](https://direnv.net/) for the dev shell
+  (`nix profile install nixpkgs#devenv`). Rust and all build tools (Flutter,
+  Android SDK, JDK, Gradle) come from it.
 
 ## Setup
+
+The dev environment is defined with **devenv** (`devenv.nix`) and entered via
+**direnv** (`.envrc`):
 
 ```bash
 git clone https://github.com/JacobDevelops/flutter2nix
 cd flutter2nix
-nix develop        # enters dev shell with Rust + tools
+direnv allow       # enters the devenv shell (or run `devenv shell` directly)
 cargo check        # verify workspace compiles
 cargo clippy       # lint
+cargo test         # unit + integration tests
 nix flake check    # verify Nix outputs
 ```
+
+Run tests from inside the devenv shell, not a bare `nix develop`: the shell's
+`enterShell` exports `LD_LIBRARY_PATH` for OpenSSL, which the test binaries link
+(via reqwest) and fail to load (`libssl.so.3: cannot open shared object file`)
+without.
 
 ## Building the tapi-shim JAR (required for gradle2nix)
 

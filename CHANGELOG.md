@@ -104,6 +104,10 @@ and kind (Added / Changed / Fixed / Performance).
 - **docs/build:** Corrected the `tapi-shim` path in CONTRIBUTING.md and a stale
   `build.rs` panic message — the shim lives at `crates/gradle2nix/tapi-shim/`,
   not the repo root, so the documented `cd tapi-shim && gradle build` failed.
+- **docs:** CONTRIBUTING.md now documents the real dev workflow — the devenv
+  shell entered via `direnv allow` (not bare `nix develop`), and that
+  `cargo test` must run inside it for the OpenSSL `LD_LIBRARY_PATH` (test
+  binaries link OpenSSL via reqwest and fail on `libssl.so.3` otherwise).
 
 ### CI
 - **ci:** Replaced the hand-rolled `actions/cache` cargo cache with
