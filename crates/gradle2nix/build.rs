@@ -41,7 +41,7 @@ fn main() {
         if src_mtime > jar_mtime {
             panic!(
                 "tapi-shim sources are newer than {}\n\
-                 Rebuild the shim: cd tapi-shim && gradle jar",
+                 Rebuild the shim: cd crates/gradle2nix/tapi-shim && gradle jar",
                 jar_path.display()
             );
         }

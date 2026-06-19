@@ -101,6 +101,9 @@ and kind (Added / Changed / Fixed / Performance).
   `consolidateMavenRepo` cold-vs-warm decision table, and reproducible commands
   for measuring closure size / path count / substitution time. Linked from the
   README.
+- **docs/build:** Corrected the `tapi-shim` path in CONTRIBUTING.md and a stale
+  `build.rs` panic message — the shim lives at `crates/gradle2nix/tapi-shim/`,
+  not the repo root, so the documented `cd tapi-shim && gradle build` failed.
 
 ### CI
 - **ci:** Replaced the hand-rolled `actions/cache` cargo cache with

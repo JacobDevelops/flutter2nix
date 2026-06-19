@@ -22,7 +22,7 @@ gradle2nix embeds the tapi-shim JAR at compile time via `include_bytes!`. You mu
 the JAR before running `cargo build -p gradle2nix`:
 
 ```bash
-cd tapi-shim && gradle build && cd ..
+(cd crates/gradle2nix/tapi-shim && gradle build)
 cargo build -p gradle2nix
 ```
 
@@ -31,8 +31,8 @@ cargo build -p gradle2nix
 When the tapi-shim Kotlin source changes, rebuild the JAR and update the hash in `flake.nix`:
 
 ```bash
-cd tapi-shim && gradle clean build && cd ..
-nix hash file tapi-shim/build/libs/tapi-shim.jar
+(cd crates/gradle2nix/tapi-shim && gradle clean build)
+nix hash file crates/gradle2nix/tapi-shim/build/libs/tapi-shim.jar
 # Copy the sha256-... value and update outputHash in flake.nix:
 #   tapi-shim-jar = pkgs.runCommand "tapi-shim-jar" {
 #     outputHash = "sha256-<new-hash-here>";
@@ -49,7 +49,7 @@ nix build .#gradle2nix
 ## Repository Layout
 
 - `crates/` — Rust workspace members (nix-core, gradle2nix, ios2nix, flutter2nix)
-- `tapi-shim/` — Kotlin/Gradle project providing the TAPI JAR for gradle2nix
+- `crates/gradle2nix/tapi-shim/` — Kotlin/Gradle project providing the TAPI JAR for gradle2nix
 - `nix/` — Nix library functions (buildGradleProject, buildAndroidApp, buildIOSApp, buildFlutterApp)
 - `docs/` — User-facing documentation
 - `tests/fixtures/` — Test fixture projects (gradle/, flutter/)
