@@ -129,5 +129,10 @@ and kind (Added / Changed / Fixed / Performance).
 - **flutter2nix:** Removed the dead `compose` module (`compose_lockfile` was a
   no-op stub returning an empty string, never called — the real composition is
   `cli::lock::generate_lockfile`).
+- **flutter2nix:** Removed dead pub-dep/SDK scaffolding — the `pub_deps`
+  (`resolver`/`codegen`) and `sdk` modules were no-op stubs with no callers
+  (pub-dep handling lives in `nix/pub-lib.nix`). Also dropped the now-unnecessary
+  crate-level `#![allow(dead_code)]`, so future dead code is caught by the CI
+  clippy gate instead of silently hidden.
 
 [Unreleased]: https://github.com/JacobDevelops/flutter2nix/commits/main
