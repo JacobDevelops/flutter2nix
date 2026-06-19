@@ -90,5 +90,9 @@ and kind (Added / Changed / Fixed / Performance).
   re-saves `target/` on every successful run. The previous cache keyed `target/`
   solely on the `Cargo.lock` hash with no `restore-keys`, so a lockfile change
   meant a fully cold build and an unchanged lockfile never refreshed `target/`.
+- **ci:** Added a `cargo fmt --all -- --check` gate to the required structural
+  job (and pinned the `rustfmt`/`clippy` toolchain components) so formatting
+  drift fails CI instead of accumulating. Existing drift across the three crates
+  was normalized in the same pass.
 
 [Unreleased]: https://github.com/JacobDevelops/flutter2nix/commits/main
