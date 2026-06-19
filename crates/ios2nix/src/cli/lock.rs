@@ -208,7 +208,9 @@ pub async fn build_dependency_graph(
     // Build a map of source_key → result, then expand to all pods referencing that source
     let mut source_key_to_result: BTreeMap<String, anyhow::Result<String>> = BTreeMap::new();
     for (source, result) in prefetch_results {
-        let source_key = source.source_key().expect("source_key must succeed for non-path pods");
+        let source_key = source
+            .source_key()
+            .expect("source_key must succeed for non-path pods");
         source_key_to_result.insert(source_key, result);
     }
 
@@ -220,7 +222,9 @@ pub async fn build_dependency_graph(
                 for (name, version, source) in group {
                     let (url, dep_source) = match &source {
                         PodSourceKind::Http { url } => (url.clone(), "pod-http"),
-                        PodSourceKind::Git { url, rev } => (format!("git+{}#{}", url, rev), "pod-git"),
+                        PodSourceKind::Git { url, rev } => {
+                            (format!("git+{}#{}", url, rev), "pod-git")
+                        }
                         PodSourceKind::Path { .. } => unreachable!("path pods filtered above"),
                     };
                     let mut dep =

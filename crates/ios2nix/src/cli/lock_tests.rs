@@ -69,14 +69,20 @@ fn test_pod_source_kind_source_key() {
         url: "https://github.com/firebase/firebase-ios-sdk.git".to_string(),
         rev: "CocoaPods-11.15.0".to_string(),
     };
-    assert_eq!(git_src.source_key().unwrap(), git_src2.source_key().unwrap());
+    assert_eq!(
+        git_src.source_key().unwrap(),
+        git_src2.source_key().unwrap()
+    );
 
     // Two pods with different revisions should produce different keys
     let git_src_diff_rev = PodSourceKind::Git {
         url: "https://github.com/firebase/firebase-ios-sdk.git".to_string(),
         rev: "CocoaPods-11.14.0".to_string(),
     };
-    assert_ne!(git_src.source_key().unwrap(), git_src_diff_rev.source_key().unwrap());
+    assert_ne!(
+        git_src.source_key().unwrap(),
+        git_src_diff_rev.source_key().unwrap()
+    );
 
     // Path pods should error
     let path_src = PodSourceKind::Path {

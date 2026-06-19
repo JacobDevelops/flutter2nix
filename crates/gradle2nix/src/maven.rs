@@ -79,9 +79,15 @@ async fn http_head(
         match tokio::time::timeout(per_try, client.head(url).send()).await {
             Ok(Ok(resp)) => return Ok(resp.status()),
             Ok(Err(e)) => {
-                log::debug!("HTTP HEAD attempt {} failed for {}: {}", attempt + 1, url, e);
-                last =
-                    Some(anyhow::Error::new(e).context(format!("HTTP HEAD request failed for {}", url)));
+                log::debug!(
+                    "HTTP HEAD attempt {} failed for {}: {}",
+                    attempt + 1,
+                    url,
+                    e
+                );
+                last = Some(
+                    anyhow::Error::new(e).context(format!("HTTP HEAD request failed for {}", url)),
+                );
             }
             Err(_) => {
                 log::debug!("HTTP HEAD attempt {} timed out for {}", attempt + 1, url);
