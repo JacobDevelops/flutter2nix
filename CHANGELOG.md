@@ -126,7 +126,9 @@ and kind (Added / Changed / Fixed / Performance).
 - **bench:** Added `benchmarks/measure-closure.sh` — a read-only, CI-runnable
   check reporting the Nix closure size and store-path count of a build result,
   to make the `consolidateMavenRepo` symlink-vs-consolidated tradeoff
-  data-driven. Referenced from `docs/ci-cache-strategy.md`.
+  data-driven. It resolves the result symlink to its store path first, since
+  `nix path-info` reads a bare name like `result` as a flake reference rather
+  than a path. Referenced from `docs/ci-cache-strategy.md`.
 
 ### Removed
 - **flutter2nix:** Removed the dead `compose` module (`compose_lockfile` was a

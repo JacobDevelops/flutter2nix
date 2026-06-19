@@ -138,6 +138,10 @@ Don't guess — measure restore-dominated vs. build-dominated time:
 
   `benchmarks/measure-closure.sh <result> [label]` wraps these two commands into
   one labeled line — build each mode's `result`, run it on both, and compare.
+  Note: measure the **offline Maven repo derivation itself** (exposed via the
+  build's `passthru`), not the final APK/AAB — an app output's closure is just
+  the artifact (build inputs like the Maven repo are not runtime references, so
+  the output closure is tiny and identical across `consolidateMavenRepo` modes).
 
   Expect ~2900 paths / ~19 MB on-disk for symlink mode vs. a handful of paths /
   ~5.6 GB for consolidated. The question CI answers is whether 2900 small object

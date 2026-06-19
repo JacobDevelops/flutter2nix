@@ -42,11 +42,16 @@ if [ ! -e "$target" ]; then
   exit 1
 fi
 
+# Resolve to the real store path: `nix path-info` reads a bare name like
+# `result` as a flake installable (`flake:result`), not a path, so follow the
+# symlink to /nix/store/... first.
+store_path=$(readlink -f "$target")
+
 # Total closure size in bytes (-S = add closure size; -r = recurse the closure).
 # Sum the per-path sizes so the number is the whole transitive closure, not just
 # the top path.
-total_bytes=$(nix path-info -rS "$target" | awk '{sum += $NF} END {print sum}')
-path_count=$(nix path-info -r "$target" | wc -l | tr -d ' ')
+total_bytes=$(nix path-info -rS "$store_path" | awk '{sum += $NF} END {print sum}')
+path_count=$(nix path-info -r "$store_path" | wc -l | tr -d ' ')
 human=$(numfmt --to=iec --suffix=B "$total_bytes" 2>/dev/null || echo "${total_bytes}B")
 
 printf '%-16s closure=%s paths=%s (%s)\n' "$label" "$human" "$path_count" "$target"
