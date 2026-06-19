@@ -189,4 +189,5 @@ For CI setup and cache tuning (which layer to cache, compression, and the
 `consolidateMavenRepo` cold-vs-warm tradeoff), see
 [docs/ci-cache-strategy.md](docs/ci-cache-strategy.md).
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and [docs/](docs/) for detailed guides.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, [CHANGELOG.md](CHANGELOG.md)
+for notable changes, and [docs/](docs/) for detailed guides.
