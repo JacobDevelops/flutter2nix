@@ -1,9 +1,18 @@
 # CI cache strategy for flutter2nix
 
 How to make clean-CI hermetic Flutter builds fast, and where to spend (and not
-spend) caching effort. The short version: **the Nix binary cache is the right
-caching layer; custom `actions/cache` archives of build inputs are almost always
-the wrong one.**
+spend) caching effort. The short version, in priority order:
+
+1. **Ship fewer bytes.** On a cold ephemeral runner the build is restore-bound, and
+   the restore is bandwidth-bound on the dependency closure. The biggest lever is a
+   *smaller closure* — it restores faster at **any** bandwidth and shrinks the cache
+   for every consumer. See [Lever 1](#lever-1-ship-fewer-bytes-the-primary-lever).
+2. **Use the Nix binary cache, not `actions/cache`.** Custom `actions/cache` archives
+   of build inputs are almost always the wrong layer (see below).
+3. **Then tune the restore** (parallelism, zstd, prefetch). These help the *many
+   small* toolchain/SDK/pub paths and make the slow step visible — but they barely
+   move a single large, incompressible Maven NAR. Tuning is the last lever, not the
+   first.
 
 ## Why the binary cache is the right layer
 
@@ -119,7 +128,51 @@ Decision:
 | Ephemeral (fresh store each run) | object-latency-bound | `consolidateMavenRepo = true` |
 | Ephemeral | chunked/dedup cache (attic) | measure both — chunking can beat the single NAR |
 
-## Cold ephemeral runners: the restore config
+## Lever 1: Ship fewer bytes (the primary lever)
+
+A cold runner's restore is bandwidth-bound on the dependency closure. Halve the
+bytes and you roughly halve the restore — at **any** link speed, and for **every**
+consumer of the cache. This dominates the tuning levers below, which barely move a
+single large incompressible NAR (a consolidated Maven repo is mostly already-
+compressed JARs/AARs; the binary cache's xz/zstd can't shrink it, so ~5.6 GB on
+disk transfers as ~5.6 GB over the wire).
+
+Measured with `ci-restore-sim.sh` against an incompressible jfit-scale fixture
+(rate 8 MB/s, 4 cores): a 256 MB closure restores in 31.1 s; a 128 MB closure in
+15.1 s — **2× fewer bytes ≈ 2× faster restore.** That linear relationship is the
+whole argument for shrinking.
+
+What you can safely cut, and what you can't:
+
+- **`-sources.jar` / `-javadoc.jar` are excluded automatically.** A hermetic
+  compile/assemble never reads them — they exist for IDEs and docs — so `gradle2nix
+  lock` drops any `sources`/`javadoc` classifier artifact before it reaches the
+  lockfile (and therefore the offline-deps closure). This is the default; there is
+  nothing to configure. Most projects pull none (Gradle's runtime resolution doesn't
+  request them), so for them it is a no-op; projects that do pull them get a free
+  reduction at zero build cost. Re-run `lock` to pick it up.
+- **Symlink mode dedups across versions and projects.** `consolidateMavenRepo =
+  false` (the default) makes each artifact its own content-addressed store path, so a
+  dep bump re-transfers only the changed paths and a shared artifact is stored once
+  across every lockfile and project. Over time this is a much smaller *cache* than
+  consolidated mode's full-NAR-per-version (see the table above). It does not shrink
+  the *first* cold pull, but it shrinks every subsequent one.
+- **What is NOT removable.** The bulk of the closure is genuinely-needed AARs/JARs
+  (native libraries for every ABI live inside single AAR files — you cannot prune one
+  without breaking the artifact's hash). The multiple `aapt2:<abi>` versions a lock
+  may contain are intentional: each matches an `aapt2-proto` version the build can
+  select. And the debug+release artifact superset is intentional so one offline repo
+  serves both. Don't prune these to chase bytes; you'll break hermeticity or
+  correctness for a closure that is mostly irreducible anyway.
+
+Measure your own closure before and after with `measure-closure.sh` (see *Measuring
+it*), and prove the restore delta with `ci-restore-sim.sh`.
+
+## Tune the restore (the secondary lever)
+
+These help the **many small** toolchain/SDK/pub paths and make the slow step
+visible in the timeline; they do **not** meaningfully speed up a single large
+incompressible Maven NAR. Apply them after Lever 1, not instead of it.
 
 On a fresh runner every build input is a cache miss, so **restore — not compile —
 dominates** end-to-end time. (Measured on a real consumer: a ~14.5 min cold
@@ -146,8 +199,11 @@ sets for you:
    `http-connections` and `max-substitution-jobs` parallelise the **many small**
    toolchain/SDK/pub paths (and are irrelevant to a single consolidated Maven NAR,
    which is one path, downloaded as one sequential stream). `download-buffer-size`
-   is the one knob that helps that single big NAR — it keeps the download from
-   stalling while the NAR drains to the store. Set these in the Nix installer's
+   is the only one of the three that can touch that single big NAR — it keeps the
+   download from stalling while the NAR drains to the store — but it only matters at
+   link speeds high enough for decompression to become the bottleneck; on a
+   bandwidth-starved runner (e.g. ~8 MB/s) the link, not the buffer, is the limit and
+   it is effectively moot. Set these in the Nix installer's
    `extra-conf` (the daemon reads them at start), or pass them per-invocation with
    `--option` from a trusted runner user. If your cache returns throttling or
    `RequestCanceled` under high parallelism, dial the first two back down.
@@ -239,9 +295,11 @@ the fix before shipping it. It:
 
 - pushes the closure to a `file://` binary cache (one per compression) — the
   *simulated remote cache*;
-- serves it over HTTP through a small **throttling** static server (per-connection
-  bandwidth cap + per-object latency) — S3/HTTP GET semantics, slowed to a runner's
-  link;
+- serves it over HTTP through a small **throttling** static server (aggregate
+  link-level bandwidth cap + per-object latency) — S3/HTTP GET semantics, slowed to a
+  runner's link. The cap is a shared token bucket across all connections, so more
+  `http-connections` cut serial round-trips but never exceed the link, and one big NAR
+  on a single connection saturates it exactly like many small paths do;
 - substitutes into a **fresh throwaway store** (every path a cold miss) **pinned to
   N cores** (`taskset`) to mirror an N-vcpu runner;
 - runs the matrix `{xz,zstd} × {default,tuned}` and prints each restore time plus
@@ -251,6 +309,26 @@ the fix before shipping it. It:
 nix build .#<app>.offlineDeps -o result-deps     # a heavy, real closure
 ./benchmarks/ci-restore-sim.sh --store-path result-deps --rate 8 --cpus 8
 ```
+
+No app handy? `benchmarks/fixtures/jfit-scale-offline-deps.nix` synthesises a
+jfit-scale closure (~5 GiB across ~2900 incompressible "JAR" files — one store
+path, the `consolidateMavenRepo=true` shape). It is deterministic and needs no
+network, so the benchmark is self-contained and reproducible:
+
+```bash
+nix build --impure -f benchmarks/fixtures/jfit-scale-offline-deps.nix -o result-deps
+./benchmarks/ci-restore-sim.sh --store-path result-deps --rate 8 --cpus 8
+# totalMiB / numArtifacts / incompressibleFrac are tunable for a quicker run.
+```
+
+Measured at small scale (rate 8 MB/s, 4 cores): a 256 MiB fixture restores in
+31.1 s and a 128 MiB fixture in 15.1 s — ~8.3 MB/s effective, and 2× bytes ≈ 2×
+time. At that throughput a full ~5 GiB closure extrapolates to ~10 min, which is in
+line with the ~11 min cold restore observed on a real consumer. (The fixture is
+deliberately *incompressible*: each artifact uses an independent AES-CTR keystream,
+so the binary cache stores ~5 GiB and the throttled link carries ~5 GiB — modelling
+real already-compressed JARs. If you make it compressible, the cache stores far less
+and the restore finishes in seconds, which would *not* reproduce the real scenario.)
 
 **Calibrate to your consumer** by effective throughput: closure_bytes ÷
 restore_seconds. A ~5.6 GB closure restoring in ~11 min is ~8.5 MB/s, so
@@ -262,7 +340,9 @@ closure (or scale `--rate` down) for a faithful absolute number.
 
 What the matrix tells you that prose can't: **whether your restore is
 bandwidth-limited or decompression-limited.** Under a hard bandwidth cap the
-*compressed* bytes dominate, so xz's better ratio can beat zstd; zstd wins only
+*compressed* bytes dominate, so xz's better ratio can beat zstd — but only when the
+payload is actually compressible; for already-compressed JARs/AARs (the real case)
+xz and zstd transfer ~equal bytes and the ratio advantage vanishes. zstd wins only
 when decompression (CPU, single-threaded per NAR) is the bottleneck — fast link,
 few cores, one big consolidated NAR. Don't assume which regime you're in; the two
 axes (`--rate` vs `--cpus`) let you find it, then pick compression accordingly.

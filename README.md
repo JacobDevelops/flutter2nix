@@ -155,6 +155,24 @@ dispatches to the Android and/or iOS builders based on host platform and the
 requested `platforms`. See [docs/ios-testing.md](docs/ios-testing.md) for the
 iOS build and signing guide.
 
+### Fast cold CI: ship fewer bytes first
+
+On a fresh runner the build is **restore-bound**, and the restore is
+bandwidth-bound on the dependency closure. The primary lever is therefore a
+*smaller closure* — it restores faster at any link speed and shrinks the cache for
+every consumer. The tuning knobs below (consolidation, zstd, the prefetch action)
+are secondary: they help the many small SDK/pub paths and make the slow step
+visible, but barely move a single large incompressible Maven NAR.
+
+`gradle2nix lock` already does the one always-safe reduction for you: it **excludes
+`-sources.jar` / `-javadoc.jar` artifacts** (a hermetic compile never reads them) so
+they never enter the lockfile or the closure. Most projects pull none, so it is a
+no-op there; projects that do get a free reduction. Beyond that, the bulk of a
+closure is genuinely-needed AARs/JARs and is irreducible. See
+[docs/ci-cache-strategy.md](docs/ci-cache-strategy.md) for the full lever ranking
+and how to measure your closure (`benchmarks/measure-closure.sh`) and prove the
+restore delta (`benchmarks/ci-restore-sim.sh`).
+
 ### `consolidateMavenRepo` (cold-CI transfer opt-in)
 
 By default the offline Maven repo **symlinks** each fetched artifact, so its Nix
