@@ -382,6 +382,13 @@ let
   #                     incremental transfer (every lockfile version becomes a
   #                     full ~5.6GB NAR), so leave it false unless your runners are
   #                     ephemeral. Forwarded to buildFlutterAndroidApp.
+  #   engineModes     — Android only; default null = keep the all-modes Flutter
+  #                     engine superset (one repo serves debug dev runs AND release
+  #                     CI). Set to the build's actual engine mode(s) — e.g.
+  #                     [ "release" ] — to drop the debug/profile engine native .so
+  #                     this build never links; the primary cold-CI closure lever,
+  #                     pure selection over the lockfile with no hash/hermeticity
+  #                     impact. Forwarded to buildFlutterAndroidApp (see there).
   #   ...             — other parameters passed through to the platform builders
   #
   # Returns an attrset with keys for each built platform (e.g., { android = drv; ios = drv; })
@@ -450,6 +457,9 @@ let
         # Only forward an explicit gradlePackage: when absent,
         # buildFlutterAndroidApp autodetects from gradle-wrapper.properties.
         // lib.optionalAttrs (args ? gradlePackage) { inherit (args) gradlePackage; }
+        # Only forward engineModes when set, so the default stays the all-modes
+        # superset (see buildFlutterAndroidApp's engineModes doc).
+        // lib.optionalAttrs (args ? engineModes) { inherit (args) engineModes; }
       );
 
       iosDrv = buildFlutterIOSApp (

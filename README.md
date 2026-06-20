@@ -155,6 +155,37 @@ dispatches to the Android and/or iOS builders based on host platform and the
 requested `platforms`. See [docs/ios-testing.md](docs/ios-testing.md) for the
 iOS build and signing guide.
 
+### Fast cold CI: ship fewer bytes first
+
+On a fresh runner the build is **restore-bound**, and the restore is
+bandwidth-bound on the dependency closure. The primary lever is therefore a
+*smaller closure* — it restores faster at any link speed and shrinks the cache for
+every consumer. The tuning knobs below (consolidation, zstd, the prefetch action)
+are secondary: they help the many small SDK/pub paths and make the slow step
+visible, but barely move a single large incompressible Maven NAR.
+
+For a Flutter app the single biggest lever is **scoping the engine to the build's
+mode**. Flutter ships its engine as per-mode × per-ABI Maven artifacts
+(`io.flutter:<abi>_<mode>`, mode ∈ {debug, profile, release}); the lockfile keeps
+the all-modes superset so one repo serves both a debug `flutter run` and release
+CI, but a release `flutter build appbundle` links only the `*_release` engine — the
+debug+profile native `.so` are dead weight on a cold restore. Pass
+`engineModes = [ "release" ]` to `buildFlutterAndroidApp` / `buildFlutterApp` to
+materialize only that mode. It is pure selection over the lockfile (bytes untouched,
+**zero hash/hermeticity risk**); the default `null` keeps the superset, so opt in
+only on a build that needs one mode. Measured on the test fixture's offline Maven
+repo (`measure-closure.sh`): **2.0 GB → 1006 MB (~50% smaller, 16 fewer paths)**;
+on a real consumer lockfile release scoping drops ~550 MB of engine bytes (81%).
+
+`gradle2nix lock` also does an always-safe reduction for you: it **excludes
+`-sources.jar` / `-javadoc.jar` artifacts** (a hermetic compile never reads them) so
+they never enter the lockfile or the closure. Most projects pull none, so it is a
+no-op there; projects that do get a free reduction. Beyond the engine variants, the
+bulk of a closure is genuinely-needed AARs/JARs and is irreducible. See
+[docs/ci-cache-strategy.md](docs/ci-cache-strategy.md) for the full lever ranking
+and how to measure your closure (`benchmarks/measure-closure.sh`) and prove the
+restore delta (`benchmarks/ci-restore-sim.sh`).
+
 ### `consolidateMavenRepo` (cold-CI transfer opt-in)
 
 By default the offline Maven repo **symlinks** each fetched artifact, so its Nix
@@ -180,6 +211,28 @@ NAR in the store/cache and every dep bump re-pushes/re-pulls the whole closure.
 Only flip it on when your runners are ephemeral. The flag is accepted by
 `buildFlutterApp`, `buildFlutterAndroidApp`, `buildAndroidApp`, and
 `buildGradleProject`.
+
+**When you set this, push your cache with zstd** (`compression=zstd` in the
+`nix copy --to` URL) — the one big NAR decompresses single-threaded on the cold
+restore path, and Nix's xz default is slow to decompress. Measure the gap on your
+repo with `benchmarks/measure-closure.sh --compression`.
+
+### Fast cold-CI restore (drop-in action)
+
+On a fresh runner, restoring the dependency closure from the cache — not the
+compile — dominates the build (on one consumer: ~11 min of a ~14.5 min step). Drop
+in the reusable composite action to realise the heavy closure first, with the
+substitution parallelism a cold runner needs:
+
+```yaml
+- uses: <your-org>/flutter2nix/.github/actions/prefetch-nix-closure@<rev>
+  with:
+    installables: ".#my-app-offline-deps"   # whatever surfaces your offline deps
+- run: nix build .#my-app
+```
+
+It encodes nothing project-specific — you name the installable. See
+[`.github/actions/prefetch-nix-closure`](.github/actions/prefetch-nix-closure/action.yml).
 
 See the doc comments in [nix/gradle2nix-lib.nix](nix/gradle2nix-lib.nix) for all
 parameters, and the `buildFlutterAndroidApp-e2e` check in [flake.nix](flake.nix)

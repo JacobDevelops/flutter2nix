@@ -32,6 +32,16 @@ fn coord_to_name(coord: &MavenCoordinate) -> String {
     }
 }
 
+/// `-sources.jar` / `-javadoc.jar` artifacts carry nothing a hermetic build
+/// compiles, processes, or links against — they exist for IDEs and documentation.
+/// Excluding them keeps them out of the lockfile and therefore out of the
+/// offline-deps closure that a cold CI runner must restore from the binary cache,
+/// shrinking that restore for every consumer at no cost to the build. See
+/// docs/ci-cache-strategy.md.
+fn is_doc_classifier(classifier: Option<&str>) -> bool {
+    matches!(classifier, Some("sources") | Some("javadoc"))
+}
+
 /// Core lock pipeline: TAPI → parse → resolve SHA-256 → DependencyGraph.
 /// Shared by `lock::run` and `check::run`.
 pub async fn build_dependency_graph(
@@ -68,10 +78,14 @@ pub async fn build_dependency_graph(
     // 3. Parse TAPI output
     let tapi_output = parse_tapi_output(&raw_json)?;
 
-    // 4. Convert artifacts to MavenCoordinates (preserve extension via @ext suffix)
+    // 4. Convert artifacts to MavenCoordinates (preserve extension via @ext suffix),
+    //    dropping `-sources`/`-javadoc` classifier artifacts up front so they never
+    //    reach the lockfile or the offline-deps closure (see is_doc_classifier).
+    let captured = tapi_output.artifacts.len();
     let coords: Vec<MavenCoordinate> = tapi_output
         .artifacts
         .iter()
+        .filter(|art| !is_doc_classifier(art.classifier.as_deref()))
         .map(|art| {
             let s = match &art.classifier {
                 Some(c) => format!(
@@ -83,11 +97,13 @@ pub async fn build_dependency_graph(
                     art.group, art.artifact, art.version, art.extension
                 ),
             };
-            MavenCoordinate::parse(&s)
+            MavenCoordinate::parse(&s).with_context(|| format!("parsing Maven coordinate '{s}'"))
         })
         .collect::<anyhow::Result<_>>()?;
+    let dropped = captured - coords.len();
     eprintln!(
-        "gradle2nix: TAPI captured {} artifacts, resolving SHA-256s...",
+        "gradle2nix: TAPI captured {captured} artifacts ({dropped} sources/javadoc \
+         excluded from the offline closure), resolving SHA-256s for {}...",
         coords.len()
     );
 
@@ -401,7 +417,10 @@ async fn discover_agp_aapt2_artifacts(
         });
     }
     while let Some(result) = set.join_next().await {
-        if let Ok(Some(entry)) = result {
+        // A spawned resolve task that panicked surfaces here as Err(JoinError);
+        // propagate it rather than finishing with a silently incomplete lockfile
+        // (a missing artifact would fail mysteriously at build time, not lock time).
+        if let Some(entry) = result.context("discovery resolve task panicked")? {
             resolved.push(entry);
         }
     }
@@ -494,7 +513,10 @@ async fn discover_all_cached_versions(
 
     let mut completed = 0usize;
     while let Some(result) = set.join_next().await {
-        if let Ok(Some(entry)) = result {
+        // A spawned resolve task that panicked surfaces here as Err(JoinError);
+        // propagate it rather than finishing with a silently incomplete lockfile
+        // (a missing artifact would fail mysteriously at build time, not lock time).
+        if let Some(entry) = result.context("discovery resolve task panicked")? {
             resolved.push(entry);
         }
         completed += 1;
@@ -671,7 +693,10 @@ async fn discover_kmp_base_artifacts(
         });
     }
     while let Some(result) = set.join_next().await {
-        if let Ok(Some(entry)) = result {
+        // A spawned resolve task that panicked surfaces here as Err(JoinError);
+        // propagate it rather than finishing with a silently incomplete lockfile
+        // (a missing artifact would fail mysteriously at build time, not lock time).
+        if let Some(entry) = result.context("discovery resolve task panicked")? {
             resolved.push(entry);
         }
     }
@@ -770,6 +795,23 @@ async fn discover_parent_poms(
 mod lock_tests {
     use super::*;
     use nix_core::dep::DependencyGraph;
+
+    #[test]
+    fn test_is_doc_classifier_excludes_only_sources_and_javadoc() {
+        // Dropped: the IDE/doc artifacts a hermetic build never reads.
+        assert!(is_doc_classifier(Some("sources")));
+        assert!(is_doc_classifier(Some("javadoc")));
+        // Kept: real build inputs — no classifier, and platform/variant classifiers
+        // such as aapt2's `linux` or the Kotlin plugin's `gradle813`.
+        assert!(!is_doc_classifier(None));
+        assert!(!is_doc_classifier(Some("linux")));
+        assert!(!is_doc_classifier(Some("gradle813")));
+        assert!(!is_doc_classifier(Some("nodeps")));
+        // Kept: testkit JARs (`tests`) are real build inputs, and an empty
+        // classifier is not a doc classifier — never confuse either with sources/javadoc.
+        assert!(!is_doc_classifier(Some("tests")));
+        assert!(!is_doc_classifier(Some("")));
+    }
 
     /// Helper to create a LockedDependency
     fn make_node(name: &str, version: &str, url: &str, sha256: &str) -> LockedDependency {

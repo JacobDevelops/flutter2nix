@@ -578,6 +578,39 @@
             assert result.url == "https://github.com/jdg/MBProgressHUD.git";
             assert result.rev == "bca42b801100b2b3a4eda0ba8dd33d858c780b0d";
             pkgs.runCommand "ios2nix-split-git-url-eval" { } "touch $out";
+          # The primary cold-CI closure lever (scopeEngineNodes): scoping the
+          # offline repo to a build's engine mode(s) must drop exactly the
+          # io.flutter <abi>_<mode> / flutter_embedding_<mode> variants the build
+          # never links, keep every non-engine node, and be an identity when null
+          # (the all-modes superset default). Pure eval over the committed fixture
+          # lock (24 io.flutter engine nodes: 8 debug / 8 profile / 8 release).
+          scope-engine-modes-eval =
+            let
+              lock = builtins.fromJSON (
+                builtins.readFile ./tests/fixtures/flutter/minimal-app/flutter2nix.lock
+              );
+              all = lock.android.nodes;
+              isEngine = n: pkgs.lib.hasPrefix "io.flutter:" n.name;
+              isRelease = n: pkgs.lib.hasInfix "_release:" n.name;
+              len = builtins.length;
+              filt = builtins.filter;
+              released = self.lib.scopeEngineNodes [ "release" ] all;
+              nonEngineAll = filt (n: !isEngine n) all;
+              releaseEngineAll = filt (n: isEngine n && isRelease n) all;
+            in
+            assert pkgs.lib.assertMsg (len (self.lib.scopeEngineNodes null all) == len all)
+              "scopeEngineNodes null must keep every node (the all-modes superset default)";
+            assert pkgs.lib.assertMsg (!(builtins.tryEval (self.lib.scopeEngineNodes [ ] all)).success)
+              "scopeEngineNodes [] must throw (dropping every engine variant is a mistake, not the superset)";
+            assert pkgs.lib.assertMsg (len released < len all)
+              "scoping a fixture with debug/profile engine variants to [release] must drop nodes";
+            assert pkgs.lib.assertMsg (len (filt (n: !isEngine n) released) == len nonEngineAll)
+              "scopeEngineNodes must keep every non-engine node";
+            assert pkgs.lib.assertMsg (len (filt isEngine released) == len releaseEngineAll)
+              "scoping to [release] must keep exactly the release engine variants";
+            assert pkgs.lib.assertMsg (builtins.all (n: !isEngine n || isRelease n) released)
+              "no debug/profile io.flutter engine variant may survive [release] scoping";
+            pkgs.runCommand "scope-engine-modes-eval" { } "touch $out";
           # Verifies buildFlutterApp dispatcher works on both platforms.
           # On Linux: android is present (androidSdk provided, isLinux=true).
           # On Darwin: ios is present (isDarwin=true, android filtered).

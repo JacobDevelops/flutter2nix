@@ -166,6 +166,52 @@ let
       pkgs."gradle_${major}"
         or (throw "gradle2nix-lib: project pins Gradle ${major}.x in gradle-wrapper.properties but nixpkgs has no gradle_${major}");
 
+  # Flutter publishes its engine native libraries as per-build-mode × per-ABI
+  # Maven artifacts under group `io.flutter`: `<abi>_<mode>` (e.g.
+  # arm64_v8a_release) for the per-ABI libflutter.so, and
+  # `flutter_embedding_<mode>` for the Java embedder, with mode ∈
+  # {debug, profile, release}. Returns a node's engine build mode, or null when
+  # the node is not an io.flutter engine variant (so non-engine nodes are never
+  # scoped out). builtins.match is whole-string anchored, so `arm64_v8a_release`
+  # yields mode "release" and `flutter_embedding_debug` yields "debug".
+  engineModeOf =
+    node:
+    let
+      coords = lib.splitString ":" node.name;
+      group = lib.head coords;
+      artifact = if lib.length coords > 1 then lib.elemAt coords 1 else "";
+      m = builtins.match "(.*)_(debug|profile|release)" artifact;
+    in
+    if group == "io.flutter" && m != null then lib.elemAt m 1 else null;
+
+  # Scopes lockfile nodes to the Flutter engine build mode(s) a build actually
+  # links. keepModes = null (default) keeps every node — the safe all-modes
+  # superset, so one offline repo serves debug `flutter run` AND release CI. A
+  # non-null list (e.g. [ "release" ]) drops io.flutter engine variants whose mode
+  # is not in the list; every non-engine node is always kept. Pure selection over
+  # the lockfile — the lockfile keeps the superset and artifact bytes are
+  # untouched, so there is no hash or hermeticity impact; it only narrows which
+  # engine .so get materialized into the offline repo (a release AAB links only
+  # *_release, so debug+profile engine .so — the bulk of the closure — are dead
+  # weight a cold runner would otherwise restore).
+  scopeEngineNodes =
+    keepModes: nodes:
+    if keepModes == null then
+      nodes
+    # [] would drop every engine variant and leave a Flutter build with no engine
+    # to resolve — an opaque Gradle failure deep in the build. Fail fast: null
+    # keeps the superset, a non-empty list names the mode(s) the build links.
+    else if keepModes == [ ] then
+      throw "gradle2nix-lib: engineModes = [] drops every Flutter engine variant — use null to keep the all-modes superset, or list the mode(s) the build links (e.g. [ \"release\" ])"
+    else
+      lib.filter (
+        node:
+        let
+          mode = engineModeOf node;
+        in
+        mode == null || lib.elem mode keepModes
+      ) nodes;
+
   # Builds a local Maven repository from lockfile nodes.
   # Each artifact is fetched by its locked sha256; a minimal POM is generated
   # alongside it so Gradle can resolve metadata without network access.
@@ -282,10 +328,11 @@ let
       jdk ? pkgs.jdk17,
       gradlePackage ? pkgs.gradle,
       consolidateMavenRepo ? false,
+      engineModes ? null,
       ...
     }:
     let
-      nodes = readNodes lockFile;
+      nodes = scopeEngineNodes engineModes (readNodes lockFile);
       mavenRepo = buildMavenRepo pkgs nodes consolidateMavenRepo;
       initScript = makeInitScript pkgs mavenRepo;
     in
@@ -379,6 +426,7 @@ in
 {
   inherit
     buildGradleProject
+    scopeEngineNodes
     wrapperGradleMajor
     defaultGradlePackage
     offlineGradleDevHook
@@ -406,10 +454,13 @@ in
       gradlePackage ? defaultGradlePackage pkgs src,
       androidSdk,
       consolidateMavenRepo ? false,
+      # engineModes: see buildFlutterAndroidApp. A no-op for pure-Gradle locks
+      # (no io.flutter engine nodes to scope); threaded for API consistency.
+      engineModes ? null,
       ...
     }:
     let
-      nodes = readNodes lockFile;
+      nodes = scopeEngineNodes engineModes (readNodes lockFile);
       mavenRepo = buildMavenRepo pkgs nodes consolidateMavenRepo;
       initScript = makeInitScript pkgs mavenRepo;
       allFlags = lib.concatStringsSep " " (
@@ -509,6 +560,19 @@ in
   #                     store path so a cold CI runner substitutes it as one NAR
   #                     rather than ~2900 per-object cache GETs; the tradeoff is
   #                     lost dedup + incremental transfer (see buildMavenRepo).
+  #   engineModes     — default null = keep the all-modes Flutter engine superset,
+  #                     so one offline repo serves debug `flutter run` AND release
+  #                     CI. Set to the build's actual engine mode(s) — e.g.
+  #                     [ "release" ] for a release appbundle — to drop the
+  #                     io.flutter engine variants this build never links (debug +
+  #                     profile native .so are the bulk of a Flutter closure). This
+  #                     is the primary cold-CI closure lever: pure selection over
+  #                     the lockfile (the lockfile keeps the superset, artifact
+  #                     bytes are untouched), so it has zero hash/hermeticity
+  #                     impact. ABIs are not scoped — a release appbundle links
+  #                     every release ABI — mode is the dominant axis. Leave null
+  #                     for any repo reused across modes (e.g. an offlineGradleDevHook
+  #                     dev shell that also debug-runs).
   buildFlutterAndroidApp =
     {
       pkgs,
@@ -523,6 +587,7 @@ in
       androidSdk,
       flutterBuildArgs ? [ ],
       consolidateMavenRepo ? false,
+      engineModes ? null,
       ...
     }:
     let
@@ -533,6 +598,7 @@ in
           jdk
           gradlePackage
           consolidateMavenRepo
+          engineModes
           ;
       };
 
