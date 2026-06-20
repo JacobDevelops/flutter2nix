@@ -144,6 +144,38 @@ whole argument for shrinking.
 
 What you can safely cut, and what you can't:
 
+- **Scope the Flutter engine to the build's mode(s) — the biggest single cut.**
+  Flutter ships its engine as per-build-mode × per-ABI Maven artifacts
+  (`io.flutter:<abi>_<mode>` native libraries plus the
+  `io.flutter:flutter_embedding_<mode>` embedder), mode ∈ {debug, profile,
+  release}. A lockfile captures the **all-modes superset** — Gradle resolves every
+  variant configuration at lock time — so one offline repo can serve both a debug
+  `flutter run` and a release CI build. But a given build links only its own mode:
+  a release `flutter build appbundle` never touches the debug or profile engine,
+  and those native `.so` are the bulk of the closure. Pass
+  `engineModes = [ "release" ]` to `buildFlutterAndroidApp` / `buildFlutterApp`
+  (or `buildGradleProject`) to materialize only the engine variant(s) the build
+  actually links. It is **pure selection over the lockfile** — the lockfile keeps
+  the superset and every artifact's bytes are untouched — so there is **zero hash
+  or hermeticity risk**. The default is `null` (keep the superset); opt in per
+  build. ABIs are deliberately *not* scoped — a release appbundle links every
+  release ABI (arm64_v8a, armeabi_v7a, x86_64) — so **mode is the axis that pays**.
+
+  Measured (minimal-app fixture offline Maven repo, `measure-closure.sh`):
+
+  | `engineModes` | closure | store paths |
+  |---|---|---|
+  | `null` (superset, default) | 2.0 GB | 734 |
+  | `[ "release" ]` | 1006 MB | 718 |
+
+  **≈994 MB (~50%) smaller**, dropping the 16 debug+profile engine store paths. On
+  a real consumer lockfile the engine artifacts weigh debug 414 MB + profile
+  136 MB + release 126 MB, so release scoping drops ~550 MB — **81% of the engine
+  bytes**. Cold restore is bandwidth-bound and linear in bytes (the sim measures
+  2× bytes ≈ 2× time), so a ~50%-smaller closure restores roughly twice as fast.
+  Leave `engineModes` null for any repo reused across modes (e.g. an
+  `offlineGradleDevHook` dev shell that also debug-runs); set it in the CI build
+  that only needs one mode.
 - **`-sources.jar` / `-javadoc.jar` are excluded automatically.** A hermetic
   compile/assemble never reads them — they exist for IDEs and docs — so `gradle2nix
   lock` drops any `sources`/`javadoc` classifier artifact before it reaches the
@@ -157,13 +189,16 @@ What you can safely cut, and what you can't:
   across every lockfile and project. Over time this is a much smaller *cache* than
   consolidated mode's full-NAR-per-version (see the table above). It does not shrink
   the *first* cold pull, but it shrinks every subsequent one.
-- **What is NOT removable.** The bulk of the closure is genuinely-needed AARs/JARs
-  (native libraries for every ABI live inside single AAR files — you cannot prune one
-  without breaking the artifact's hash). The multiple `aapt2:<abi>` versions a lock
-  may contain are intentional: each matches an `aapt2-proto` version the build can
-  select. And the debug+release artifact superset is intentional so one offline repo
-  serves both. Don't prune these to chase bytes; you'll break hermeticity or
-  correctness for a closure that is mostly irreducible anyway.
+- **What is NOT removable.** Once the unused-mode engine variants are scoped out
+  (above), the bulk of what remains is genuinely-needed AARs/JARs — native libraries
+  for every ABI live inside single AAR files, so you cannot prune one without breaking
+  the artifact's hash. The multiple `aapt2:<abi>` versions a lock may contain are
+  intentional too: each matches an `aapt2-proto` version the build can select. The
+  all-modes engine superset is the safe *default* (one repo serves debug dev runs and
+  release CI), but — unlike those — it **is** prunable: `engineModes` scopes it per
+  build without touching the lockfile. Outside the engine variants, don't hand-prune
+  artifacts to chase bytes; you'll break hermeticity for a closure that is otherwise
+  mostly irreducible.
 
 Measure your own closure before and after with `measure-closure.sh` (see *Measuring
 it*), and prove the restore delta with `ci-restore-sim.sh`.

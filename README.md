@@ -164,11 +164,24 @@ every consumer. The tuning knobs below (consolidation, zstd, the prefetch action
 are secondary: they help the many small SDK/pub paths and make the slow step
 visible, but barely move a single large incompressible Maven NAR.
 
-`gradle2nix lock` already does the one always-safe reduction for you: it **excludes
+For a Flutter app the single biggest lever is **scoping the engine to the build's
+mode**. Flutter ships its engine as per-mode × per-ABI Maven artifacts
+(`io.flutter:<abi>_<mode>`, mode ∈ {debug, profile, release}); the lockfile keeps
+the all-modes superset so one repo serves both a debug `flutter run` and release
+CI, but a release `flutter build appbundle` links only the `*_release` engine — the
+debug+profile native `.so` are dead weight on a cold restore. Pass
+`engineModes = [ "release" ]` to `buildFlutterAndroidApp` / `buildFlutterApp` to
+materialize only that mode. It is pure selection over the lockfile (bytes untouched,
+**zero hash/hermeticity risk**); the default `null` keeps the superset, so opt in
+only on a build that needs one mode. Measured on the test fixture's offline Maven
+repo (`measure-closure.sh`): **2.0 GB → 1006 MB (~50% smaller, 16 fewer paths)**;
+on a real consumer lockfile release scoping drops ~550 MB of engine bytes (81%).
+
+`gradle2nix lock` also does an always-safe reduction for you: it **excludes
 `-sources.jar` / `-javadoc.jar` artifacts** (a hermetic compile never reads them) so
 they never enter the lockfile or the closure. Most projects pull none, so it is a
-no-op there; projects that do get a free reduction. Beyond that, the bulk of a
-closure is genuinely-needed AARs/JARs and is irreducible. See
+no-op there; projects that do get a free reduction. Beyond the engine variants, the
+bulk of a closure is genuinely-needed AARs/JARs and is irreducible. See
 [docs/ci-cache-strategy.md](docs/ci-cache-strategy.md) for the full lever ranking
 and how to measure your closure (`benchmarks/measure-closure.sh`) and prove the
 restore delta (`benchmarks/ci-restore-sim.sh`).
