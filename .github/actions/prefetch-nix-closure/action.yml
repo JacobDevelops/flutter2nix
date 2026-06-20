@@ -1,0 +1,70 @@
+name: "flutter2nix: prefetch Nix closure"
+description: >
+  Substitute a build closure (typically the offline-deps derivation) from your
+  binary cache up front, with the substitution tuning flutter2nix recommends for
+  cold ephemeral CI runners. On a fresh runner the dominant cost of a hermetic
+  build is restoring the large dependency closure from the remote cache; Nix's
+  default parallelism (http-connections=25, max-substitution-jobs=16,
+  download-buffer-size=64MiB) under-uses the link against a high-latency cache.
+  This action realises the closure you name as its own timed step with raised
+  limits, so the slow part is parallelised, visible in the run timeline, and done
+  before the offline build starts. Encodes nothing project-specific — you pass the
+  installable(s).
+inputs:
+  installables:
+    description: >
+      Space-separated Nix installables to realise (substitute, or build on a cache
+      miss) before the build, e.g. '.#my-app-offline-deps'. Their closures are
+      fetched into the local store; nothing is symlinked into the workspace.
+    required: true
+  http-connections:
+    description: "Max parallel HTTP connections to the substituter (Nix default 25). Raise for high-latency remote caches."
+    required: false
+    default: "128"
+  max-substitution-jobs:
+    description: "Max parallel substitution jobs (Nix default 16). Parallelises across the many small paths in the toolchain/SDK tier."
+    required: false
+    default: "128"
+  download-buffer-size:
+    description: "Substitution download buffer in bytes (Nix default 64 MiB). Raise to avoid stalls on large NARs such as a consolidated Maven repo."
+    required: false
+    default: "536870912"
+  extra-substituters:
+    description: "Optional extra substituters to add for this step only (space-separated). Leave empty to use the daemon's configured caches."
+    required: false
+    default: ""
+  extra-trusted-public-keys:
+    description: "Optional trusted public keys matching extra-substituters (space-separated)."
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Prefetch Nix closure (cold-CI tuned)
+      shell: bash
+      # ponytail: substitution tuning is passed per-invocation via --option, which
+      # the daemon honours for a trusted runner user (the default on
+      # GitHub-hosted + Determinate Nix). If your runner user is NOT trusted, set
+      # these via the Nix installer's extra-conf instead — --option is then ignored.
+      run: |
+        set -euo pipefail
+        opts=(
+          --no-link
+          --option http-connections "${{ inputs.http-connections }}"
+          --option max-substitution-jobs "${{ inputs.max-substitution-jobs }}"
+          --option download-buffer-size "${{ inputs.download-buffer-size }}"
+        )
+        if [ -n "${{ inputs.extra-substituters }}" ]; then
+          opts+=(--option extra-substituters "${{ inputs.extra-substituters }}")
+        fi
+        if [ -n "${{ inputs.extra-trusted-public-keys }}" ]; then
+          opts+=(--option extra-trusted-public-keys "${{ inputs.extra-trusted-public-keys }}")
+        fi
+        # shellcheck disable=SC2206  # word-splitting the space-separated input is intended
+        installables=(${{ inputs.installables }})
+        echo "::group::nix build --no-link ${installables[*]}"
+        start=$(date +%s)
+        nix build "${opts[@]}" "${installables[@]}"
+        end=$(date +%s)
+        echo "::endgroup::"
+        echo "prefetch-nix-closure: realised ${installables[*]} in $((end - start))s"
