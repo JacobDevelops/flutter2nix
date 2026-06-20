@@ -67,6 +67,13 @@ let
       produceArchive ? false,
       scheme ? "Runner",
       configuration ? "Release",
+      # Dart obfuscation. Default off → byte-identical to the un-obfuscated build.
+      # When true, the generated xcconfig sets DART_OBFUSCATION=true +
+      # SPLIT_DEBUG_INFO=<splitDebugInfo> so `flutter assemble` obfuscates and
+      # writes the Dart symbol files there, and installPhase surfaces that dir as
+      # $out/debug-symbols (mirroring the Android gradle2nix-lib).
+      obfuscate ? false,
+      splitDebugInfo ? "build/debug-symbols",
       ...
     }:
     let
@@ -157,7 +164,7 @@ let
           printf 'FLUTTER_BUILD_DIR=build\n'
           printf 'FLUTTER_BUILD_NAME=%s\n' "$flutter_build_name"
           printf 'FLUTTER_BUILD_NUMBER=%s\n' "$flutter_build_number"
-          printf 'DART_OBFUSCATION=false\n'
+          printf 'DART_OBFUSCATION=${if obfuscate then "true" else "false"}\n'${lib.optionalString obfuscate "\n          printf 'SPLIT_DEBUG_INFO=${splitDebugInfo}\\n'"}
           printf 'TRACK_WIDGET_CREATION=true\n'
           printf 'TREE_SHAKE_ICONS=false\n'
           printf 'PACKAGE_CONFIG=.dart_tool/package_config.json\n'
@@ -341,7 +348,18 @@ let
               cp -R "$NIX_BUILD_TOP/DerivedData/Build/Products/${configuration}-iphoneos/"*.app $out/
             ''
         }
+        ${lib.optionalString obfuscate ''
 
+          # Obfuscation: surface the Dart split-debug-info (app.ios-*.symbols + any
+          # obfuscation map) that `flutter assemble` wrote to ${splitDebugInfo},
+          # mirroring the Android gradle2nix-lib, so consumers can upload them to
+          # Sentry to deobfuscate release Dart stack traces. Guarded — never fails
+          # an ordinary build.
+          if [ -n "$(find ${splitDebugInfo} -type f 2>/dev/null)" ]; then
+            mkdir -p $out/debug-symbols
+            cp -R ${splitDebugInfo}/. $out/debug-symbols/
+          fi
+        ''}
         runHook postInstall
       '';
     };
@@ -477,6 +495,8 @@ let
           produceArchive = args.produceArchive or false;
           scheme = args.scheme or "Runner";
           configuration = args.configuration or "Release";
+          obfuscate = args.obfuscate or false;
+          splitDebugInfo = args.splitDebugInfo or "build/debug-symbols";
         }
       );
 
