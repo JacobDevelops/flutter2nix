@@ -42,6 +42,16 @@ runs:
   steps:
     - name: Prefetch Nix closure (cold-CI tuned)
       shell: bash
+      # Inputs reach the script via env, not `${{ }}` inlined into `run:` — the
+      # latter is a template-injection footgun (a caller-supplied value would be
+      # spliced into the script text). Referencing "$VARS" passes them as data.
+      env:
+        INSTALLABLES: ${{ inputs.installables }}
+        HTTP_CONNECTIONS: ${{ inputs.http-connections }}
+        MAX_SUBSTITUTION_JOBS: ${{ inputs.max-substitution-jobs }}
+        DOWNLOAD_BUFFER_SIZE: ${{ inputs.download-buffer-size }}
+        EXTRA_SUBSTITUTERS: ${{ inputs.extra-substituters }}
+        EXTRA_TRUSTED_PUBLIC_KEYS: ${{ inputs.extra-trusted-public-keys }}
       # ponytail: substitution tuning is passed per-invocation via --option, which
       # the daemon honours for a trusted runner user (the default on
       # GitHub-hosted + Determinate Nix). If your runner user is NOT trusted, set
@@ -50,18 +60,18 @@ runs:
         set -euo pipefail
         opts=(
           --no-link
-          --option http-connections "${{ inputs.http-connections }}"
-          --option max-substitution-jobs "${{ inputs.max-substitution-jobs }}"
-          --option download-buffer-size "${{ inputs.download-buffer-size }}"
+          --option http-connections "$HTTP_CONNECTIONS"
+          --option max-substitution-jobs "$MAX_SUBSTITUTION_JOBS"
+          --option download-buffer-size "$DOWNLOAD_BUFFER_SIZE"
         )
-        if [ -n "${{ inputs.extra-substituters }}" ]; then
-          opts+=(--option extra-substituters "${{ inputs.extra-substituters }}")
+        if [ -n "$EXTRA_SUBSTITUTERS" ]; then
+          opts+=(--option extra-substituters "$EXTRA_SUBSTITUTERS")
         fi
-        if [ -n "${{ inputs.extra-trusted-public-keys }}" ]; then
-          opts+=(--option extra-trusted-public-keys "${{ inputs.extra-trusted-public-keys }}")
+        if [ -n "$EXTRA_TRUSTED_PUBLIC_KEYS" ]; then
+          opts+=(--option extra-trusted-public-keys "$EXTRA_TRUSTED_PUBLIC_KEYS")
         fi
         # shellcheck disable=SC2206  # word-splitting the space-separated input is intended
-        installables=(${{ inputs.installables }})
+        installables=($INSTALLABLES)
         echo "::group::nix build --no-link ${installables[*]}"
         start=$(date +%s)
         nix build "${opts[@]}" "${installables[@]}"
