@@ -181,6 +181,28 @@ Only flip it on when your runners are ephemeral. The flag is accepted by
 `buildFlutterApp`, `buildFlutterAndroidApp`, `buildAndroidApp`, and
 `buildGradleProject`.
 
+**When you set this, push your cache with zstd** (`compression=zstd` in the
+`nix copy --to` URL) — the one big NAR decompresses single-threaded on the cold
+restore path, and Nix's xz default is slow to decompress. Measure the gap on your
+repo with `benchmarks/measure-closure.sh --compression`.
+
+### Fast cold-CI restore (drop-in action)
+
+On a fresh runner, restoring the dependency closure from the cache — not the
+compile — dominates the build (on one consumer: ~11 min of a ~14.5 min step). Drop
+in the reusable composite action to realise the heavy closure first, with the
+substitution parallelism a cold runner needs:
+
+```yaml
+- uses: <your-org>/flutter2nix/.github/actions/prefetch-nix-closure@<rev>
+  with:
+    installables: ".#my-app-offline-deps"   # whatever surfaces your offline deps
+- run: nix build .#my-app
+```
+
+It encodes nothing project-specific — you name the installable. See
+[`.github/actions/prefetch-nix-closure`](.github/actions/prefetch-nix-closure/action.yml).
+
 See the doc comments in [nix/gradle2nix-lib.nix](nix/gradle2nix-lib.nix) for all
 parameters, and the `buildFlutterAndroidApp-e2e` check in [flake.nix](flake.nix)
 for a complete working example.

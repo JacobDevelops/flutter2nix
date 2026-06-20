@@ -119,6 +119,75 @@ Decision:
 | Ephemeral (fresh store each run) | object-latency-bound | `consolidateMavenRepo = true` |
 | Ephemeral | chunked/dedup cache (attic) | measure both — chunking can beat the single NAR |
 
+## Cold ephemeral runners: the restore config
+
+On a fresh runner every build input is a cache miss, so **restore — not compile —
+dominates** end-to-end time. (Measured on a real consumer: a ~14.5 min cold
+Android build step decomposed as ~11 min Nix realising the build closure, ~2.6 min
+unpacking SDK derivations, and only ~43 s of actual Gradle/Flutter compile. That
+~11 min is overwhelmingly remote-cache *substitution*: the workflow pipes
+`nix build` through a `grep -Ev` that strips every `copying path`/`fetching path`
+line, and no local build-phase output — which is *not* stripped — appears until
+the final ~3 min, so little is being built locally during the silence.) Three
+settings move the restore, all of which the `prefetch-nix-closure` action below
+sets for you:
+
+1. **Substitution parallelism.** Nix's defaults (`http-connections = 25`,
+   `max-substitution-jobs = 16`, `download-buffer-size = 64 MiB`) under-use the
+   link to a high-latency remote cache:
+
+   ```
+   http-connections = 128
+   max-substitution-jobs = 128
+   download-buffer-size = 536870912   # 512 MiB
+   ```
+
+   Know what each one buys you — they are not interchangeable levers:
+   `http-connections` and `max-substitution-jobs` parallelise the **many small**
+   toolchain/SDK/pub paths (and are irrelevant to a single consolidated Maven NAR,
+   which is one path, downloaded as one sequential stream). `download-buffer-size`
+   is the one knob that helps that single big NAR — it keeps the download from
+   stalling while the NAR drains to the store. Set these in the Nix installer's
+   `extra-conf` (the daemon reads them at start), or pass them per-invocation with
+   `--option` from a trusted runner user. If your cache returns throttling or
+   `RequestCanceled` under high parallelism, dial the first two back down.
+
+2. **zstd — strongly recommended if you set `consolidateMavenRepo = true`.**
+   Consolidation collapses ~2900 small NARs into one big NAR: great for object
+   latency, but that single NAR then decompresses **single-threaded on the restore
+   path**, and the Nix push default is xz (best ratio, slowest to decompress). Push
+   your cache with zstd so the big NAR decompresses several-fold faster:
+
+   ```
+   nix copy --to 's3://my-cache?compression=zstd&parallel-compression=true&…' .#my-app-offline-deps
+   ```
+
+   Cachix and attic already serve zstd. This is a seconds-scale win, not a
+   minutes-scale one — xz-decompressing even a multi-GB NAR is on the order of
+   seconds, small next to download time — but it is free to claim. Quantify it on
+   your repo with `measure-closure.sh --compression` (see *Measuring it*).
+
+3. **Prefetch the heavy closure as its own step.** Realise the offline-deps
+   derivation *before* the build, so the slow restore is parallelised, timed, and
+   visible in the run timeline rather than buried inside the build step:
+
+   ```yaml
+   - uses: <your-org>/flutter2nix/.github/actions/prefetch-nix-closure@<rev>
+     with:
+       installables: ".#my-app-offline-deps"   # whatever surfaces your offline deps
+   - run: nix build .#my-app   # project-tier closure already local
+   ```
+
+   The action applies the tuning in (1) by default (override via its inputs) and
+   encodes nothing project-specific — you name the installable. **Scope caveat:** an
+   app's `offlineDeps` usually covers the project tier (Maven repo + pub packages)
+   but **not** the Flutter/Android SDK/JDK/Gradle closure, which is still
+   substituted inside `nix build`. To cover that too, either add those installables
+   here, or — simplest — put the tuning in the installer's `extra-conf` so it
+   applies daemon-wide to the build step as well (also the fallback when the runner
+   user is not trusted, since `--option` is then ignored). See
+   `.github/actions/prefetch-nix-closure/action.yml`.
+
 ## Measuring it
 
 Don't guess — measure restore-dominated vs. build-dominated time:
@@ -147,6 +216,14 @@ Don't guess — measure restore-dominated vs. build-dominated time:
   ~5.6 GB for consolidated. The question CI answers is whether 2900 small object
   GETs or one 5.6 GB NAR pull is faster on *your* runner — so measure restore
   time on the actual cache backend.
+
+- **NAR compression** (xz vs zstd), the cold-restore-time lever for a consolidated
+  repo: `benchmarks/measure-closure.sh --compression <result> [label]` dumps the
+  path's NAR once and reports each codec's compressed size and — what actually
+  matters — its **decompression** wall-clock. Run it on the consolidated Maven
+  repo path to confirm zstd's faster decompress before committing to xz on your
+  cache. (It compresses the full NAR locally, so it needs scratch disk and a
+  minute on the ~5.6 GB repo; point it at a smaller path first to sanity-check.)
 
 - **Substitution time** on a cold store: `nix copy --from <cache> <path>` against
   a throwaway store (`--store ./tmp-store`) and time it. Never GC or delete
