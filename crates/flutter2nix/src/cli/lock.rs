@@ -50,7 +50,11 @@ pub async fn generate_lockfile(
     };
 
     let ios_dir = project_dir.join("ios");
-    let ios_section = if crate::detect::detect_ios(project_dir) {
+    // ios2nix also locks from a `.ios2nix-podspecs.json` sidecar (no Podfile.lock
+    // required), so gate on either signal — otherwise a sidecar-only project is
+    // skipped here and fails later with a confusing "no 'ios' section".
+    let has_ios_sidecar = ios_dir.join(".ios2nix-podspecs.json").exists();
+    let ios_section = if crate::detect::detect_ios(project_dir) || has_ios_sidecar {
         // CocoaPods resolution must not use the Gradle cache.
         // TODO: future --ios-cache-dir flag for CocoaPods artifact caching
         let graph = ios2nix::cli::lock::build_dependency_graph(&ios_dir, &[], None, timeout_secs)
@@ -65,7 +69,8 @@ pub async fn generate_lockfile(
         if ios_dir.is_dir() {
             eprintln!(
                 "warning: '{}' exists but has no Podfile.lock — skipping iOS lock; \
-                 run `pod install` (or `flutter build ios --config-only`) to generate it",
+                 run `pod install` (or `flutter build ios --config-only`) to generate it, \
+                 or provide a .ios2nix-podspecs.json sidecar",
                 ios_dir.display()
             );
         }
@@ -115,20 +120,5 @@ pub async fn run(cmd: LockCommand) -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn errors_when_no_lockable_platforms() {
-        let tmp = tempfile::tempdir().unwrap();
-        // pubspec.yaml present, but no android/ or ios/ → nothing to lock.
-        std::fs::write(tmp.path().join("pubspec.yaml"), "name: demo\n").unwrap();
-        let err = generate_lockfile(tmp.path(), &[], None, None, 5, 5)
-            .await
-            .expect_err("a project with no lockable platforms must error");
-        assert!(
-            err.to_string().contains("no lockable platforms"),
-            "expected 'no lockable platforms' hint, got: {err}"
-        );
-    }
-}
+#[path = "lock_tests.rs"]
+mod tests;
