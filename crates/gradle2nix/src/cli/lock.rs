@@ -97,7 +97,7 @@ pub async fn build_dependency_graph(
                     art.group, art.artifact, art.version, art.extension
                 ),
             };
-            MavenCoordinate::parse(&s)
+            MavenCoordinate::parse(&s).with_context(|| format!("parsing Maven coordinate '{s}'"))
         })
         .collect::<anyhow::Result<_>>()?;
     let dropped = captured - coords.len();
@@ -417,8 +417,12 @@ async fn discover_agp_aapt2_artifacts(
         });
     }
     while let Some(result) = set.join_next().await {
-        if let Ok(Some(entry)) = result {
-            resolved.push(entry);
+        match result {
+            Ok(Some(entry)) => resolved.push(entry),
+            Ok(None) => {}
+            // A spawned resolve task panicked (a bug, not a soft "not found") —
+            // surface it instead of silently dropping the artifact.
+            Err(e) => eprintln!("gradle2nix: discovery task panicked: {e}"),
         }
     }
 
@@ -510,8 +514,12 @@ async fn discover_all_cached_versions(
 
     let mut completed = 0usize;
     while let Some(result) = set.join_next().await {
-        if let Ok(Some(entry)) = result {
-            resolved.push(entry);
+        match result {
+            Ok(Some(entry)) => resolved.push(entry),
+            Ok(None) => {}
+            // A spawned resolve task panicked (a bug, not a soft "not found") —
+            // surface it instead of silently dropping the artifact.
+            Err(e) => eprintln!("gradle2nix: discovery task panicked: {e}"),
         }
         completed += 1;
         if total > 0 {
@@ -687,8 +695,12 @@ async fn discover_kmp_base_artifacts(
         });
     }
     while let Some(result) = set.join_next().await {
-        if let Ok(Some(entry)) = result {
-            resolved.push(entry);
+        match result {
+            Ok(Some(entry)) => resolved.push(entry),
+            Ok(None) => {}
+            // A spawned resolve task panicked (a bug, not a soft "not found") —
+            // surface it instead of silently dropping the artifact.
+            Err(e) => eprintln!("gradle2nix: discovery task panicked: {e}"),
         }
     }
 
@@ -798,6 +810,10 @@ mod lock_tests {
         assert!(!is_doc_classifier(Some("linux")));
         assert!(!is_doc_classifier(Some("gradle813")));
         assert!(!is_doc_classifier(Some("nodeps")));
+        // Kept: testkit JARs (`tests`) are real build inputs, and an empty
+        // classifier is not a doc classifier — never confuse either with sources/javadoc.
+        assert!(!is_doc_classifier(Some("tests")));
+        assert!(!is_doc_classifier(Some("")));
     }
 
     /// Helper to create a LockedDependency
