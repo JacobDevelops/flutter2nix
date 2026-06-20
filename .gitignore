@@ -52,3 +52,6 @@ tests/fixtures/gradle/*/app/build/
 # OMC
 .omc/notepad.md
 .omc/specs
+
+# Ralph loop progress (machine-local agent bookkeeping)
+.claude/ralph/

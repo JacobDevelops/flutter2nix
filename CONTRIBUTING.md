@@ -3,18 +3,29 @@
 ## Prerequisites
 
 - [Nix](https://nixos.org/download/) with flakes enabled
-- Rust stable (provided by the dev shell)
+- [devenv](https://devenv.sh/) + [direnv](https://direnv.net/) for the dev shell
+  (`nix profile install nixpkgs#devenv`). Rust and all build tools (Flutter,
+  Android SDK, JDK, Gradle) come from it.
 
 ## Setup
+
+The dev environment is defined with **devenv** (`devenv.nix`) and entered via
+**direnv** (`.envrc`):
 
 ```bash
 git clone https://github.com/JacobDevelops/flutter2nix
 cd flutter2nix
-nix develop        # enters dev shell with Rust + tools
+direnv allow       # enters the devenv shell (or run `devenv shell` directly)
 cargo check        # verify workspace compiles
 cargo clippy       # lint
+cargo test         # unit + integration tests
 nix flake check    # verify Nix outputs
 ```
+
+Run tests from inside the devenv shell, not a bare `nix develop`: the shell's
+`enterShell` exports `LD_LIBRARY_PATH` for OpenSSL, which the test binaries link
+(via reqwest) and fail to load (`libssl.so.3: cannot open shared object file`)
+without.
 
 ## Building the tapi-shim JAR (required for gradle2nix)
 
@@ -22,7 +33,7 @@ gradle2nix embeds the tapi-shim JAR at compile time via `include_bytes!`. You mu
 the JAR before running `cargo build -p gradle2nix`:
 
 ```bash
-cd tapi-shim && gradle build && cd ..
+(cd crates/gradle2nix/tapi-shim && gradle build)
 cargo build -p gradle2nix
 ```
 
@@ -31,8 +42,8 @@ cargo build -p gradle2nix
 When the tapi-shim Kotlin source changes, rebuild the JAR and update the hash in `flake.nix`:
 
 ```bash
-cd tapi-shim && gradle clean build && cd ..
-nix hash file tapi-shim/build/libs/tapi-shim.jar
+(cd crates/gradle2nix/tapi-shim && gradle clean build)
+nix hash file crates/gradle2nix/tapi-shim/build/libs/tapi-shim.jar
 # Copy the sha256-... value and update outputHash in flake.nix:
 #   tapi-shim-jar = pkgs.runCommand "tapi-shim-jar" {
 #     outputHash = "sha256-<new-hash-here>";
@@ -49,7 +60,7 @@ nix build .#gradle2nix
 ## Repository Layout
 
 - `crates/` — Rust workspace members (nix-core, gradle2nix, ios2nix, flutter2nix)
-- `tapi-shim/` — Kotlin/Gradle project providing the TAPI JAR for gradle2nix
+- `crates/gradle2nix/tapi-shim/` — Kotlin/Gradle project providing the TAPI JAR for gradle2nix
 - `nix/` — Nix library functions (buildGradleProject, buildAndroidApp, buildIOSApp, buildFlutterApp)
 - `docs/` — User-facing documentation
 - `tests/fixtures/` — Test fixture projects (gradle/, flutter/)

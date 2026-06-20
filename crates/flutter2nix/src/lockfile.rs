@@ -28,8 +28,16 @@ pub fn write_lockfile(path: &Path, lock: &FlutterLockfile) -> anyhow::Result<()>
 }
 
 pub fn read_lockfile(path: &Path) -> anyhow::Result<FlutterLockfile> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read lockfile '{}'", path.display()))?;
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => anyhow::bail!(
+            "lockfile '{}' not found — run `flutter2nix lock` to generate it",
+            path.display()
+        ),
+        Err(e) => {
+            return Err(e).with_context(|| format!("failed to read lockfile '{}'", path.display()))
+        }
+    };
     serde_json::from_str(&content)
         .with_context(|| format!("failed to parse lockfile '{}'", path.display()))
 }

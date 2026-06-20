@@ -11,3 +11,7 @@ pub fn detect_android(project_dir: &Path) -> bool {
 pub fn detect_ios(project_dir: &Path) -> bool {
     project_dir.join("ios").is_dir() && project_dir.join("ios/Podfile.lock").exists()
 }
+
+#[cfg(test)]
+#[path = "detect_tests.rs"]
+mod tests;

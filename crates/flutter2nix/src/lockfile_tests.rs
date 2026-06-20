@@ -94,6 +94,11 @@ fn test_read_missing_file_errors() {
         msg.contains("flutter2nix.lock"),
         "error must mention file path: {msg}"
     );
+    // A missing lockfile must hint at the fix, not just surface a raw IO error.
+    assert!(
+        msg.contains("run `flutter2nix lock`"),
+        "missing-lockfile error should hint to run `flutter2nix lock`: {msg}"
+    );
 }
 
 #[test]

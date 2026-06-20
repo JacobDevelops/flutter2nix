@@ -250,9 +250,12 @@ pub async fn build_dependency_graph(
                     )
                     .await
                     {
-                        Ok((url, _serving_repo)) => {
-                            Ok(LockedDependency::new(coord_to_name(&coord), coord.version.clone(), url, sha256))
-                        }
+                        Ok((url, _serving_repo)) => Ok(LockedDependency::new(
+                            coord_to_name(&coord),
+                            coord.version.clone(),
+                            url,
+                            sha256,
+                        )),
                         Err(e) => Err((coord, e)),
                     }
                 }
@@ -299,11 +302,7 @@ pub async fn build_dependency_graph(
 
     // Sort nodes deterministically by (name, url) for reproducible lockfiles.
     // This ensures identical content produces identical output regardless of discovery order.
-    nodes.sort_by(|a, b| {
-        a.name
-            .cmp(&b.name)
-            .then_with(|| a.url.cmp(&b.url))
-    });
+    nodes.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.url.cmp(&b.url)));
 
     Ok(DependencyGraph {
         format_version: "1".to_string(),
@@ -774,7 +773,12 @@ mod lock_tests {
 
     /// Helper to create a LockedDependency
     fn make_node(name: &str, version: &str, url: &str, sha256: &str) -> LockedDependency {
-        LockedDependency::new(name.to_string(), version.to_string(), url.to_string(), sha256.to_string())
+        LockedDependency::new(
+            name.to_string(),
+            version.to_string(),
+            url.to_string(),
+            sha256.to_string(),
+        )
     }
 
     #[test]
@@ -812,11 +816,7 @@ mod lock_tests {
 
         // Now manually test the sorting logic that build_dependency_graph uses
         let mut sorted = graph.nodes.clone();
-        sorted.sort_by(|a, b| {
-            a.name
-                .cmp(&b.name)
-                .then_with(|| a.url.cmp(&b.url))
-        });
+        sorted.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.url.cmp(&b.url)));
 
         // Verify they are sorted by name (and url as tiebreaker)
         assert_eq!(sorted[0].name, "com.google.guava:guava:31.1-jre");
@@ -847,11 +847,7 @@ mod lock_tests {
         };
 
         let mut sorted = graph.nodes.clone();
-        sorted.sort_by(|a, b| {
-            a.name
-                .cmp(&b.name)
-                .then_with(|| a.url.cmp(&b.url))
-        });
+        sorted.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.url.cmp(&b.url)));
 
         // URL-based sort should put .jar before .pom (lexicographic)
         assert_eq!(sorted[0].url, "https://example.com/lib/1.0/lib-1.0.jar");

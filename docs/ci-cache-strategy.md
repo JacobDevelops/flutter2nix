@@ -1,0 +1,163 @@
+# CI cache strategy for flutter2nix
+
+How to make clean-CI hermetic Flutter builds fast, and where to spend (and not
+spend) caching effort. The short version: **the Nix binary cache is the right
+caching layer; custom `actions/cache` archives of build inputs are almost always
+the wrong one.**
+
+## Why the binary cache is the right layer
+
+Every hermetic input flutter2nix builds against is already a content-addressed
+Nix store path:
+
+- the Flutter SDK (`pkgs.flutter`),
+- the Android SDK (`androidenv.composeAndroidPackages`), JDK, and Gradle,
+- the offline Maven repo (`buildMavenRepo` in `nix/gradle2nix-lib.nix`),
+- Dart pub dependencies (fixed-output derivations from `pubspec.lock`, see
+  `nix/pub-lib.nix`),
+- CocoaPods inputs for iOS.
+
+Nix already does, for free, everything a hand-rolled CI cache tries to do:
+
+- **Dedup** — identical paths are stored and transferred once, across lockfile
+  versions, projects, and builders.
+- **Compression** — NARs are compressed by the substituter (xz on
+  cache.nixos.org; zstd is configurable on your own cache — see below).
+- **Incremental transfer** — only store paths missing from the local store are
+  fetched; a dep bump pulls the changed paths, not the world.
+- **Integrity** — every path is hash-verified on substitution.
+
+A custom `actions/cache` tar of `/nix/store` (or of `~/.gradle`, `~/.pub-cache`,
+etc.) **fights** all of this: it re-compresses what Nix already compressed,
+defeats per-path dedup, and risks restoring a store that disagrees with the
+build's expectations. Don't do it. Cache *cargo's* `target/` with
+`Swatinem/rust-cache` (that's not a Nix path — see `.github/workflows/ci.yml`),
+but cache *Nix build inputs* by pointing CI at a binary cache.
+
+### Concretely
+
+1. Add a binary cache substituter the CI runner can read **and** write:
+   - [Cachix](https://www.cachix.org/) — `cachix/cachix-action`, zstd NARs.
+   - [attic](https://github.com/zhaofengli/attic) — self-hosted, zstd, dedup by
+     chunk.
+   - `DeterminateSystems/magic-nix-cache-action` — zero-config, backs onto the
+     GitHub Actions cache (fine for small/medium closures; the Actions cache has
+     a 10 GB repo cap, so watch the SDK + maven-repo closure size).
+   - A plain S3/HTTP `nix copy --to` cache.
+2. Build once (`nix build .#<app>`), push the closure to the cache.
+3. Subsequent clean runs substitute the unchanged closure instead of rebuilding.
+
+cache.nixos.org already serves the toolchain/SDK tier (Flutter, Android SDK,
+JDK, Gradle) for most nixpkgs revisions, so even with no private cache the most
+expensive *downloads* are already covered — what your private cache adds is the
+**project-specific** tier (maven repo, pub deps, CocoaPods).
+
+## Cache classes by stability tier
+
+Split caching effort by how often each class changes. Most-stable first:
+
+| Tier | Contents | Changes when | Where it's served |
+|------|----------|--------------|-------------------|
+| Toolchain / SDK | `pkgs.flutter`, Android SDK, JDK, Gradle, Rust toolchain | nixpkgs / flake.lock bump | cache.nixos.org (mostly) |
+| Dependencies | offline Maven repo, pub deps, CocoaPods pods | `gradle2nix.lock` / `pubspec.lock` / `Podfile.lock` bump | your private cache |
+| Build outputs | APK / AAB / IPA, gradle/flutter build dirs | every source edit | don't cache — cheap to rebuild given warm deps |
+| Lock-time | gradle2nix resolve-cache (`resolve-cache.json`) | new/changed deps during `lock` | persist by a stable key (tiny JSON) |
+
+Two consequences:
+
+- **Don't cache build outputs.** With the dependency tier warm, an
+  `assembleRelease` / `flutter build` is minutes, not the bottleneck. Caching the
+  volatile output churns the cache for little benefit (cache save cost > restore
+  benefit).
+- **The gradle2nix resolve-cache is a *lock-time* cache, not a build cache.** It
+  lives at `{gradle-user-home}/caches/gradle2nix/resolve-cache.json` and only
+  speeds up regenerating the lockfile (resolved SHA-256s, POM texts, confirmed
+  404s — Maven release URLs are immutable). It is small and safe to cache by a
+  key over `gradle2nix.lock`. It has nothing to do with the hermetic build.
+
+## Compression: xz vs zstd, and when it matters
+
+NAR compression is a per-cache setting, not a per-build one. The tradeoff is
+ratio (smaller transfer) vs. decompression speed (faster restore):
+
+- **xz** — best ratio, slow to decompress. cache.nixos.org default. Good for the
+  toolchain/SDK tier: pushed rarely, pulled often, cached on the runner's store
+  after the first pull anyway.
+- **zstd** — slightly larger, *much* faster to decompress, fast to compress.
+  Better for the **dependency tier** on ephemeral runners where **restore time
+  dominates** end-to-end CI time. Cachix and attic serve zstd; configure it on a
+  self-hosted cache with `compression = zstd` (and tune `compression-level`).
+
+Rule of thumb: **optimise for fastest end-to-end CI, not smallest archive.** On a
+cold ephemeral runner the offline Maven repo's ~5.6 GB decompresses on the
+critical path, so zstd's faster decompression usually wins even though the NAR is
+a bit larger. On a persistent builder the closure is already local, so
+compression barely matters.
+
+## The `consolidateMavenRepo` decision
+
+`buildMavenRepo` (`nix/gradle2nix-lib.nix`) has two shapes, selected by the
+`consolidateMavenRepo` flag (default `false`):
+
+- **Symlink (default).** Each fetched artifact is symlinked, so the repo's
+  closure is ~2900 content-addressed store paths. Dedups across lockfile versions
+  and projects; a warm builder transfers only the paths a dep bump changed. **The
+  right default for persistent builders and any setup with a private binary
+  cache.**
+- **Consolidated (`consolidateMavenRepo = true`).** Every artifact is copied into
+  a single store path, so the whole repo substitutes as **one NAR in one
+  request**. On an ephemeral cold-store runner this avoids ~2900 per-object cache
+  GETs (minutes of per-object latency even when every path is a hit). Cost: the
+  single NAR shares nothing, so each lockfile version is a full (~5.6 GB) NAR and
+  every dep bump re-pushes/re-pulls the whole closure.
+
+Decision:
+
+| Runner | Private cache | Use |
+|--------|---------------|-----|
+| Persistent (self-hosted, warm store) | any | symlink (default) |
+| Ephemeral (fresh store each run) | object-latency-bound | `consolidateMavenRepo = true` |
+| Ephemeral | chunked/dedup cache (attic) | measure both — chunking can beat the single NAR |
+
+## Measuring it
+
+Don't guess — measure restore-dominated vs. build-dominated time:
+
+- **End-to-end build wall-clock**, cold and warm: `fnx bench` (run inside
+  `nix develop`). Targets: `lock`, `gradle-build`, `flutter-build`, `ios-lock`,
+  `ios-build`. Results append to `benchmarks/BENCHMARKS.md` /
+  `benchmarks/history.jsonl`.
+- **Closure size and path count** of the offline Maven repo per mode (the
+  `consolidateMavenRepo` tradeoff, made data-driven):
+
+  ```bash
+  # symlink (default) vs consolidated — build each, then compare:
+  nix path-info -Sh ./result            # total closure size (human)
+  nix path-info -rS ./result | wc -l    # number of store paths in the closure
+  ```
+
+  `benchmarks/measure-closure.sh <result> [label]` wraps these two commands into
+  one labeled line — build each mode's `result`, run it on both, and compare.
+  Note: measure the **offline Maven repo derivation itself** (exposed via the
+  build's `passthru`), not the final APK/AAB — an app output's closure is just
+  the artifact (build inputs like the Maven repo are not runtime references, so
+  the output closure is tiny and identical across `consolidateMavenRepo` modes).
+
+  Expect ~2900 paths / ~19 MB on-disk for symlink mode vs. a handful of paths /
+  ~5.6 GB for consolidated. The question CI answers is whether 2900 small object
+  GETs or one 5.6 GB NAR pull is faster on *your* runner — so measure restore
+  time on the actual cache backend.
+
+- **Substitution time** on a cold store: `nix copy --from <cache> <path>` against
+  a throwaway store (`--store ./tmp-store`) and time it. Never GC or delete
+  `/nix/store`, `~/.cache`, `~/.gradle`, `~/.pub-cache`, or `~/.android` to force
+  a cold measurement — use an explicit throwaway store/dir instead.
+
+## Anti-patterns
+
+- Tarring `/nix/store` (or `~/.gradle`, `~/.pub-cache`) into `actions/cache`.
+- Caching build outputs (APK/AAB/IPA) across runs.
+- Forcing cold measurements by deleting shared global caches.
+- Optimising for smallest archive instead of fastest end-to-end CI.
+- Flipping `consolidateMavenRepo` on for a persistent builder (kills dedup and
+  incremental transfer for no benefit).

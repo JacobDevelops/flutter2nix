@@ -1,5 +1,14 @@
 use std::path::Path;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
+
+// Tolerance for the JAR-staleness check below. `git checkout` (CI, fresh clones)
+// and the Nix sandbox materialize every file at ~the same instant in arbitrary
+// order, so the shim sources routinely land a hair "newer" than the committed
+// JAR with nothing actually edited. A real post-build source edit lands the
+// sources minutes+ ahead, so only a margin this side of that gap is drift.
+// ponytail: 2s separates checkout skew from real edits; wire a content hash into
+// the gradle build instead if drift detection ever needs to be exact.
+const STALENESS_TOLERANCE: Duration = Duration::from_secs(2);
 
 /// Latest modification time of any file under `dir` (recursive).
 fn newest_mtime(dir: &Path) -> Option<SystemTime> {
@@ -34,14 +43,16 @@ fn main() {
     // Guard against embedding a stale JAR: cargo only sees the JAR file, so an
     // edit to the Kotlin shim or the bundled init script is invisible until the
     // JAR is rebuilt — fail loudly instead of silently shipping old behavior.
+    // The tolerance keeps this from false-firing on checkout-time mtime skew
+    // (see STALENESS_TOLERANCE), which is what made CI fail on every fresh clone.
     let jar_mtime = std::fs::metadata(jar_path)
         .and_then(|m| m.modified())
         .expect("tapi-shim JAR mtime");
     if let Some(src_mtime) = newest_mtime(shim_src) {
-        if src_mtime > jar_mtime {
+        if src_mtime > jar_mtime + STALENESS_TOLERANCE {
             panic!(
                 "tapi-shim sources are newer than {}\n\
-                 Rebuild the shim: cd tapi-shim && gradle jar",
+                 Rebuild the shim: cd crates/gradle2nix/tapi-shim && gradle jar",
                 jar_path.display()
             );
         }

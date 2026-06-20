@@ -108,9 +108,11 @@ installation options, CLI reference, Nix flake integration, and troubleshooting.
 
 ## flutter2nix — Flutter apps
 
-flutter2nix wraps gradle2nix for Flutter projects: it locks the `android/` Gradle
-build (driven internally by `flutter build`) into a unified `flutter2nix.lock`.
-An `ios` section is planned but not yet implemented.
+flutter2nix wraps gradle2nix (and ios2nix) for Flutter projects, producing a
+unified cross-platform `flutter2nix.lock`. It always locks the `android/` Gradle
+build (driven internally by `flutter build`); when an `ios/Podfile.lock` is
+present it also locks the iOS CocoaPods dependencies into an `ios` section of the
+same lockfile.
 
 ```bash
 # Install
@@ -147,6 +149,12 @@ flutter2nix.lib.buildFlutterAndroidApp {
 }
 ```
 
+For iOS, `buildFlutterIOSApp` runs `xcodebuild archive` hermetically on macOS
+(CocoaPods resolved from the lockfile's `ios` section), and `buildFlutterApp`
+dispatches to the Android and/or iOS builders based on host platform and the
+requested `platforms`. See [docs/ios-testing.md](docs/ios-testing.md) for the
+iOS build and signing guide.
+
 ### `consolidateMavenRepo` (cold-CI transfer opt-in)
 
 By default the offline Maven repo **symlinks** each fetched artifact, so its Nix
@@ -176,5 +184,9 @@ Only flip it on when your runners are ephemeral. The flag is accepted by
 See the doc comments in [nix/gradle2nix-lib.nix](nix/gradle2nix-lib.nix) for all
 parameters, and the `buildFlutterAndroidApp-e2e` check in [flake.nix](flake.nix)
 for a complete working example.
+
+For CI setup and cache tuning (which layer to cache, compression, and the
+`consolidateMavenRepo` cold-vs-warm tradeoff), see
+[docs/ci-cache-strategy.md](docs/ci-cache-strategy.md).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and [docs/](docs/) for detailed guides.

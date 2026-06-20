@@ -50,21 +50,43 @@ pub async fn generate_lockfile(
     };
 
     let ios_dir = project_dir.join("ios");
-    let ios_section = if crate::detect::detect_ios(project_dir) {
+    // ios2nix also locks from a `.ios2nix-podspecs.json` sidecar (no Podfile.lock
+    // required), so gate on either signal — otherwise a sidecar-only project is
+    // skipped here and fails later with a confusing "no 'ios' section".
+    let has_ios_sidecar = ios_dir.join(".ios2nix-podspecs.json").exists();
+    let ios_section = if crate::detect::detect_ios(project_dir) || has_ios_sidecar {
         // CocoaPods resolution must not use the Gradle cache.
         // TODO: future --ios-cache-dir flag for CocoaPods artifact caching
-        let graph = ios2nix::cli::lock::build_dependency_graph(
-            &ios_dir,
-            &[],
-            None,
-            timeout_secs,
-        )
-        .await
-        .with_context(|| format!("resolving iOS dependencies in '{}'", ios_dir.display()))?;
+        let graph = ios2nix::cli::lock::build_dependency_graph(&ios_dir, &[], None, timeout_secs)
+            .await
+            .with_context(|| format!("resolving iOS dependencies in '{}'", ios_dir.display()))?;
         Some(crate::lockfile::IosSection { nodes: graph.nodes })
     } else {
+        // An ios/ dir with no Podfile.lock is a realistic "haven't run pod
+        // install yet" state. Without this warning the iOS section is silently
+        // omitted and only resurfaces later as a confusing "lockfile has no
+        // 'ios' section" at build time.
+        if ios_dir.is_dir() {
+            eprintln!(
+                "warning: '{}' exists but has no Podfile.lock — skipping iOS lock; \
+                 run `pod install` (or `flutter build ios --config-only`) to generate it, \
+                 or provide a .ios2nix-podspecs.json sidecar",
+                ios_dir.display()
+            );
+        }
         None
     };
+
+    // A pubspec.yaml with neither a lockable android/ nor ios/ would produce an
+    // empty lockfile — a silent no-op that usually means the command was run
+    // outside the app root or the platform dirs are missing. Fail with a hint.
+    anyhow::ensure!(
+        android_section.is_some() || ios_section.is_some(),
+        "no lockable platforms in '{}': a Flutter app needs an android/ directory \
+         (or an ios/ with a Podfile.lock). Run `flutter2nix lock` from the app root \
+         where pubspec.yaml and android/ live.",
+        project_dir.display()
+    );
 
     Ok(crate::lockfile::FlutterLockfile {
         android: android_section,
@@ -96,3 +118,7 @@ pub async fn run(cmd: LockCommand) -> anyhow::Result<()> {
     println!("Wrote flutter2nix lockfile: {}", output_path.display());
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "lock_tests.rs"]
+mod tests;

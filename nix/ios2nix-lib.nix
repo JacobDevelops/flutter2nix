@@ -1,5 +1,6 @@
-# ios2nix Nix library functions.
-# Mirrors the gradle2nix-lib.nix structure: readPods, buildPodsSandbox, and buildIOSApp.
+# ios2nix Nix library functions: readPods, splitGitUrl, buildPodsSandbox,
+# buildIOSApp (hermetic xcarchive + optional signed export), and signIosArchive
+# (out-of-build signer that keeps the distribution cert/profile out of the store).
 { lib }:
 
 let

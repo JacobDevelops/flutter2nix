@@ -19,6 +19,20 @@ fn test_lock_parse_podfile() {
 }
 
 #[tokio::test]
+async fn test_lock_missing_podfile_lock_is_actionable() {
+    // No Podfile.lock and no sidecar → an actionable error, not a raw IO error.
+    let dir = tempfile::TempDir::new().unwrap();
+    let err = build_dependency_graph(dir.path(), &[], None, 60)
+        .await
+        .expect_err("missing Podfile.lock (no sidecar) must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Podfile.lock not found") && msg.contains("pod install"),
+        "error should hint to run `pod install`: {msg}"
+    );
+}
+
+#[tokio::test]
 async fn test_lock_sidecar_excludes_path_pods() {
     let dir = tempfile::TempDir::new().unwrap();
     let sidecar = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -69,14 +83,20 @@ fn test_pod_source_kind_source_key() {
         url: "https://github.com/firebase/firebase-ios-sdk.git".to_string(),
         rev: "CocoaPods-11.15.0".to_string(),
     };
-    assert_eq!(git_src.source_key().unwrap(), git_src2.source_key().unwrap());
+    assert_eq!(
+        git_src.source_key().unwrap(),
+        git_src2.source_key().unwrap()
+    );
 
     // Two pods with different revisions should produce different keys
     let git_src_diff_rev = PodSourceKind::Git {
         url: "https://github.com/firebase/firebase-ios-sdk.git".to_string(),
         rev: "CocoaPods-11.14.0".to_string(),
     };
-    assert_ne!(git_src.source_key().unwrap(), git_src_diff_rev.source_key().unwrap());
+    assert_ne!(
+        git_src.source_key().unwrap(),
+        git_src_diff_rev.source_key().unwrap()
+    );
 
     // Path pods should error
     let path_src = PodSourceKind::Path {

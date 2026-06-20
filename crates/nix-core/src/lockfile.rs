@@ -13,8 +13,16 @@ pub fn write_lockfile(path: &std::path::Path, graph: &DependencyGraph) -> anyhow
 
 /// Read a dependency graph from a lockfile (JSON format)
 pub fn read_lockfile(path: &std::path::Path) -> anyhow::Result<DependencyGraph> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("failed to read lockfile '{}': {}", path.display(), e))?;
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            anyhow::anyhow!(
+                "lockfile '{}' not found — run the `lock` command to generate it",
+                path.display()
+            )
+        } else {
+            anyhow::anyhow!("failed to read lockfile '{}': {}", path.display(), e)
+        }
+    })?;
     let graph = serde_json::from_str::<DependencyGraph>(&content).map_err(|e| {
         if e.is_syntax() || e.is_eof() {
             anyhow::anyhow!("invalid JSON in lockfile '{}': {}", path.display(), e)

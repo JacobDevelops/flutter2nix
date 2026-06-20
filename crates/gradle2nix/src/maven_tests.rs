@@ -639,10 +639,7 @@ async fn test_verify_artifact_url_primary_repo_hit() {
         .await
         .unwrap();
 
-    assert_eq!(
-        result.0,
-        format!("{}/{}", primary_repo, artifact_path)
-    );
+    assert_eq!(result.0, format!("{}/{}", primary_repo, artifact_path));
     assert_eq!(result.1, primary_repo);
 }
 
@@ -664,7 +661,8 @@ async fn test_verify_artifact_url_primary_404_fallback_hit() {
     // Since mockito is a single server, we can't test true multi-server fallback easily.
     // Instead, test that when primary fails (404), the function reports an error.
     let fallback_repos = vec![];
-    let result = verify_artifact_url(&coord, &primary_repo, &fallback_repos, &client, 30, None).await;
+    let result =
+        verify_artifact_url(&coord, &primary_repo, &fallback_repos, &client, 30, None).await;
     assert!(result.is_err());
 }
 
@@ -683,7 +681,8 @@ async fn test_verify_artifact_url_all_repos_404() {
     let fallback_repos = vec![];
 
     let client = crate::maven::shared_http_client();
-    let result = verify_artifact_url(&coord, &primary_repo, &fallback_repos, &client, 30, None).await;
+    let result =
+        verify_artifact_url(&coord, &primary_repo, &fallback_repos, &client, 30, None).await;
 
     assert!(result.is_err());
     let err = result.unwrap_err();
@@ -709,9 +708,16 @@ async fn test_verify_artifact_url_cache_hit() {
     let client = crate::maven::shared_http_client();
 
     // First call: hits network
-    let result1 = verify_artifact_url(&coord, &primary_repo, &fallback_repos, &client, 30, Some(&cache))
-        .await
-        .unwrap();
+    let result1 = verify_artifact_url(
+        &coord,
+        &primary_repo,
+        &fallback_repos,
+        &client,
+        30,
+        Some(&cache),
+    )
+    .await
+    .unwrap();
 
     // Cache now has the URL marked as existing
     let cached = cache.lookup_url_exists(&result1.0);
