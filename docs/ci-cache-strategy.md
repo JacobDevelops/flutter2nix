@@ -230,6 +230,43 @@ Don't guess — measure restore-dominated vs. build-dominated time:
   `/nix/store`, `~/.cache`, `~/.gradle`, `~/.pub-cache`, or `~/.android` to force
   a cold measurement — use an explicit throwaway store/dir instead.
 
+### Reproducing cold-CI slowness locally
+
+CI is the worst place to A/B-test a cache change: every run is a cold cloud
+runner you can't attach to. `benchmarks/ci-restore-sim.sh` recreates the
+restore-dominated build on one machine, no cloud and no root, so you can measure
+the fix before shipping it. It:
+
+- pushes the closure to a `file://` binary cache (one per compression) — the
+  *simulated remote cache*;
+- serves it over HTTP through a small **throttling** static server (per-connection
+  bandwidth cap + per-object latency) — S3/HTTP GET semantics, slowed to a runner's
+  link;
+- substitutes into a **fresh throwaway store** (every path a cold miss) **pinned to
+  N cores** (`taskset`) to mirror an N-vcpu runner;
+- runs the matrix `{xz,zstd} × {default,tuned}` and prints each restore time plus
+  the `xz/default → zstd/tuned` speedup.
+
+```bash
+nix build .#<app>.offlineDeps -o result-deps     # a heavy, real closure
+./benchmarks/ci-restore-sim.sh --store-path result-deps --rate 8 --cpus 8
+```
+
+**Calibrate to your consumer** by effective throughput: closure_bytes ÷
+restore_seconds. A ~5.6 GB closure restoring in ~11 min is ~8.5 MB/s, so
+`--rate 8` reproduces that per-byte timing; a smaller closure finishes sooner but
+the ratios and the per-GB extrapolation hold. Note the link carries the
+**compressed** NARs, not the uncompressed closure, so a very compressible closure
+restores faster than its on-disk size suggests — use a real, representative
+closure (or scale `--rate` down) for a faithful absolute number.
+
+What the matrix tells you that prose can't: **whether your restore is
+bandwidth-limited or decompression-limited.** Under a hard bandwidth cap the
+*compressed* bytes dominate, so xz's better ratio can beat zstd; zstd wins only
+when decompression (CPU, single-threaded per NAR) is the bottleneck — fast link,
+few cores, one big consolidated NAR. Don't assume which regime you're in; the two
+axes (`--rate` vs `--cpus`) let you find it, then pick compression accordingly.
+
 ## Anti-patterns
 
 - Tarring `/nix/store` (or `~/.gradle`, `~/.pub-cache`) into `actions/cache`.
