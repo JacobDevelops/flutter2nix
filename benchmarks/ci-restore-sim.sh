@@ -47,13 +47,16 @@ latency=30
 cpus=8
 cells="xz:default xz:tuned zstd:default zstd:tuned"
 keep=0
+# Every value-taking flag needs an argument; report which one is missing instead
+# of letting `set -u` abort with a cryptic "$2: unbound variable".
+need() { [ "$#" -ge 2 ] || { echo "error: $1 requires a value" >&2; exit 2; }; }
 while [ $# -gt 0 ]; do
   case $1 in
-    --store-path) store_arg=$2; shift 2 ;;
-    --rate) rate=$2; shift 2 ;;
-    --latency) latency=$2; shift 2 ;;
-    --cpus) cpus=$2; shift 2 ;;
-    --cells) cells=$2; shift 2 ;;
+    --store-path) need "$@"; store_arg=$2; shift 2 ;;
+    --rate) need "$@"; rate=$2; shift 2 ;;
+    --latency) need "$@"; latency=$2; shift 2 ;;
+    --cpus) need "$@"; cpus=$2; shift 2 ;;
+    --cells) need "$@"; cells=$2; shift 2 ;;
     --keep) keep=1; shift ;;
     -h|--help) sed -n '2,/^set -euo/p' "$0" | sed 's/^# \{0,1\}//; s/^#//'; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;

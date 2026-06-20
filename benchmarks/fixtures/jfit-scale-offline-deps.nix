@@ -27,6 +27,11 @@ let
   randPer = bytesPer * incompressibleFrac / 100;
   zeroPer = bytesPer - randPer; # compressible remainder (xz/zstd collapse it)
 in
+# Validate the knobs before the size math runs: numArtifacts is the divisor for
+# bytesPer, and incompressibleFrac outside 0..100 would make randPer exceed
+# bytesPer (negative zeroPer → a broken `head -c`).
+assert numArtifacts > 0;
+assert incompressibleFrac >= 0 && incompressibleFrac <= 100;
 pkgs.runCommand "jfit-scale-offline-deps-${toString totalMiB}MiB"
   {
     nativeBuildInputs = [

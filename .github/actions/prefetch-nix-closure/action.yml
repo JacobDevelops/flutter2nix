@@ -70,8 +70,11 @@ runs:
         if [ -n "$EXTRA_TRUSTED_PUBLIC_KEYS" ]; then
           opts+=(--option extra-trusted-public-keys "$EXTRA_TRUSTED_PUBLIC_KEYS")
         fi
-        # shellcheck disable=SC2206  # word-splitting the space-separated input is intended
-        installables=($INSTALLABLES)
+        # read -a splits the space-separated input on IFS WITHOUT pathname
+        # expansion — an unquoted installables=($INSTALLABLES) would glob a value
+        # like '.#*' against the workspace. Fail early on an empty result.
+        read -r -a installables <<<"$INSTALLABLES"
+        [ "${#installables[@]}" -gt 0 ] || { echo "error: 'installables' input is empty" >&2; exit 2; }
         echo "::group::nix build --no-link ${installables[*]}"
         start=$(date +%s)
         nix build "${opts[@]}" "${installables[@]}"

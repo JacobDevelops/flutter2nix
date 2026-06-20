@@ -224,7 +224,7 @@ sets for you:
    `max-substitution-jobs = 16`, `download-buffer-size = 64 MiB`) under-use the
    link to a high-latency remote cache:
 
-   ```
+   ```ini
    http-connections = 128
    max-substitution-jobs = 128
    download-buffer-size = 536870912   # 512 MiB
@@ -249,7 +249,7 @@ sets for you:
    path**, and the Nix push default is xz (best ratio, slowest to decompress). Push
    your cache with zstd so the big NAR decompresses several-fold faster:
 
-   ```
+   ```bash
    nix copy --to 's3://my-cache?compression=zstd&parallel-compression=true&…' .#my-app-offline-deps
    ```
 

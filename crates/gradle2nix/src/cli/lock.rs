@@ -417,12 +417,11 @@ async fn discover_agp_aapt2_artifacts(
         });
     }
     while let Some(result) = set.join_next().await {
-        match result {
-            Ok(Some(entry)) => resolved.push(entry),
-            Ok(None) => {}
-            // A spawned resolve task panicked (a bug, not a soft "not found") —
-            // surface it instead of silently dropping the artifact.
-            Err(e) => eprintln!("gradle2nix: discovery task panicked: {e}"),
+        // A spawned resolve task that panicked surfaces here as Err(JoinError);
+        // propagate it rather than finishing with a silently incomplete lockfile
+        // (a missing artifact would fail mysteriously at build time, not lock time).
+        if let Some(entry) = result.context("discovery resolve task panicked")? {
+            resolved.push(entry);
         }
     }
 
@@ -514,12 +513,11 @@ async fn discover_all_cached_versions(
 
     let mut completed = 0usize;
     while let Some(result) = set.join_next().await {
-        match result {
-            Ok(Some(entry)) => resolved.push(entry),
-            Ok(None) => {}
-            // A spawned resolve task panicked (a bug, not a soft "not found") —
-            // surface it instead of silently dropping the artifact.
-            Err(e) => eprintln!("gradle2nix: discovery task panicked: {e}"),
+        // A spawned resolve task that panicked surfaces here as Err(JoinError);
+        // propagate it rather than finishing with a silently incomplete lockfile
+        // (a missing artifact would fail mysteriously at build time, not lock time).
+        if let Some(entry) = result.context("discovery resolve task panicked")? {
+            resolved.push(entry);
         }
         completed += 1;
         if total > 0 {
@@ -695,12 +693,11 @@ async fn discover_kmp_base_artifacts(
         });
     }
     while let Some(result) = set.join_next().await {
-        match result {
-            Ok(Some(entry)) => resolved.push(entry),
-            Ok(None) => {}
-            // A spawned resolve task panicked (a bug, not a soft "not found") —
-            // surface it instead of silently dropping the artifact.
-            Err(e) => eprintln!("gradle2nix: discovery task panicked: {e}"),
+        // A spawned resolve task that panicked surfaces here as Err(JoinError);
+        // propagate it rather than finishing with a silently incomplete lockfile
+        // (a missing artifact would fail mysteriously at build time, not lock time).
+        if let Some(entry) = result.context("discovery resolve task panicked")? {
+            resolved.push(entry);
         }
     }
 
