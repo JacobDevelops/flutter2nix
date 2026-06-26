@@ -5,4 +5,5 @@ pub mod fmt;
 pub mod lock;
 pub mod shell;
 pub mod signing_e2e;
+pub mod signing_sim;
 pub mod test;

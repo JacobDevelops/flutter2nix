@@ -183,6 +183,121 @@ fn signed_archive_command(
     }
 }
 
+/// Hermetic "simulate" signing test: exercises the real ios2nix signing
+/// pipeline against throwaway self-signed material minted by `fnx`
+/// (`tools/fnx/src/cmd/signing_sim.rs`). It runs only when `IOS2NIX_SIMULATE=1`
+/// so the standard `cargo test --ignored` invocation (real material) skips it.
+///
+/// Coverage with self-signed material:
+///   * `sign_setup::run` — temp keychain create + `security import` of the
+///     self-signed `.p12` + profile install (the keychain import path).
+///   * `provisioning::{decode_cms_plist, parse_profile_plist}` — the
+///     openssl-CMS-signed `.mobileprovision` round-trips through the parser.
+///   * `cli::sign::run` — the inside-out re-sign + `codesign --verify` path.
+///
+/// The final bundle signature is ad-hoc (`-`): macOS refuses to code-sign with
+/// an untrusted self-signed identity non-interactively, so the cert is
+/// exercised through import + CMS-signing rather than the leaf `codesign -s`
+/// step. The heavy `xcodebuild` device-archive tests need an Apple-chained cert
+/// and are not part of simulate mode.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "simulate mode: gated on IOS2NIX_SIMULATE=1, driven by fnx signing-e2e"]
+fn test_cli_simulate_self_signed_sign_and_verify() {
+    if std::env::var("IOS2NIX_SIMULATE").as_deref() != Ok("1") {
+        // Not a simulate run (e.g. plain `cargo test --ignored` with real
+        // material). Nothing to do — the real-material tests cover that path.
+        return;
+    }
+
+    // 1. sign-setup: temp keychain + import the self-signed identity + install
+    //    the synthesized profile. Drop deletes the keychain even on panic.
+    let signing = setup_signing_from_env();
+
+    // 2. The synthesized CMS profile parsed cleanly (setup_signing_from_env
+    //    already decoded + parsed it); assert the team id round-tripped.
+    assert_eq!(
+        signing.profile.team_id, signing.team_id,
+        "synthesized profile TeamIdentifier must match IOS2NIX_TEAM_ID"
+    );
+
+    // 3. Build a minimal IPA: Payload/<App>.app/{Info.plist, executable}.
+    let tmpdir = tempfile::TempDir::new().expect("failed to create tempdir");
+    let app_dir = tmpdir.path().join("Payload/Sim.app");
+    std::fs::create_dir_all(&app_dir).expect("failed to create app dir");
+    std::fs::write(
+        app_dir.join("Info.plist"),
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+         <plist version=\"1.0\"><dict>\
+         <key>CFBundleIdentifier</key><string>com.ios2nix.simulated</string>\
+         <key>CFBundleName</key><string>Sim</string>\
+         <key>CFBundleExecutable</key><string>Sim</string>\
+         </dict></plist>\n",
+    )
+    .expect("failed to write Info.plist");
+    let exe = app_dir.join("Sim");
+    std::fs::write(&exe, "#!/bin/sh\necho sim\n").expect("failed to write executable");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755))
+            .expect("failed to chmod executable");
+    }
+
+    let ipa_path = tmpdir.path().join("sim.ipa");
+    let zip_status = std::process::Command::new("zip")
+        .arg("-qry")
+        .arg(&ipa_path)
+        .arg(".")
+        .current_dir(tmpdir.path())
+        .status()
+        .expect("failed to run zip");
+    assert!(zip_status.success(), "zip should package the IPA");
+
+    // 4. Re-sign via the real ios2nix sign path. Ad-hoc identity ("-") because
+    //    the self-signed cert is not trusted for codesign; the keychain is
+    //    still passed to exercise that argument plumbing.
+    let signed_ipa = ios2nix::cli::sign::run(ios2nix::cli::sign::SignCommand {
+        ipa_path: ipa_path.clone(),
+        identity: "-".to_string(),
+        keychain: Some(signing.keychain.clone()),
+        output: tmpdir.path().join("sim-signed.ipa"),
+    })
+    .expect("ios2nix sign (ad-hoc) should succeed");
+    assert!(signed_ipa.exists(), "signed IPA should exist");
+
+    // 5. Verify the signature on the unpacked .app (sign::run already ran
+    //    `codesign --verify --deep --strict` internally; re-check the artifact
+    //    to assert the produced IPA is genuinely valid).
+    let unpack_dir = tmpdir.path().join("unpacked");
+    let unzip_status = std::process::Command::new("unzip")
+        .args(["-q", "-o"])
+        .arg(&signed_ipa)
+        .arg("-d")
+        .arg(&unpack_dir)
+        .status()
+        .expect("failed to run unzip");
+    assert!(unzip_status.success(), "signed IPA should be a valid zip");
+
+    let app_path = std::fs::read_dir(unpack_dir.join("Payload"))
+        .expect("IPA should contain Payload/")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|ext| ext == "app"))
+        .expect("Payload/ should contain a .app bundle");
+
+    let verify = std::process::Command::new("codesign")
+        .args(["--verify", "--deep", "--strict", "--verbose=4"])
+        .arg(&app_path)
+        .output()
+        .expect("failed to run codesign verify");
+    assert!(
+        verify.status.success(),
+        "simulated .app should pass code signature verification: {}",
+        String::from_utf8_lossy(&verify.stderr)
+    );
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 #[ignore = "requires signing material via IOS2NIX_* env"]

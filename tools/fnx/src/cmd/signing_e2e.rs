@@ -22,8 +22,11 @@ const REQUIRED_KEYS: [&str; 5] = [
 /// Load the IOS2NIX_* signing vars from the local env file, ready to inject
 /// into a child process: password file resolved, required keys validated, and
 /// a fresh throwaway keychain password generated when not supplied. Returns
-/// `None` (no error) when the file is absent or the host is not macOS — the
-/// "gate closed" case callers report as a skip.
+/// `None` (no error) when **real** material is not fully usable: the host is
+/// not macOS, the file is absent, or any path it references (p12, password
+/// file, profile) is missing/unreadable. A dangling env file is treated as
+/// "no real material" rather than an error so the signing e2e can fall back to
+/// simulate mode (and the build benchmark, which needs real material, skips).
 pub fn load_signing_vars(repo_root: &Path) -> anyhow::Result<Option<BTreeMap<String, String>>> {
     let env_file = repo_root.join(SIGNING_ENV_FILE);
     if !env_file.exists() || !cfg!(target_os = "macos") {
@@ -32,9 +35,12 @@ pub fn load_signing_vars(repo_root: &Path) -> anyhow::Result<Option<BTreeMap<Str
 
     let mut vars = parse_env_file(&env_file)?;
 
+    // Resolve the indirect password file. A missing/unreadable password file
+    // means the real material is gone — fall back rather than erroring.
     if let Some(pw_file) = vars.remove("IOS2NIX_P12_PASSWORD_FILE") {
-        let pw = std::fs::read_to_string(&pw_file)
-            .with_context(|| format!("failed to read IOS2NIX_P12_PASSWORD_FILE {pw_file}"))?;
+        let Ok(pw) = std::fs::read_to_string(&pw_file) else {
+            return Ok(None);
+        };
         vars.insert(
             "IOS2NIX_P12_PASSWORD".to_string(),
             pw.trim_end().to_string(),
@@ -43,6 +49,15 @@ pub fn load_signing_vars(repo_root: &Path) -> anyhow::Result<Option<BTreeMap<Str
 
     validate_required(&vars, &env_file)?;
 
+    // The p12 and profile the contract points at must actually exist on disk;
+    // otherwise sign-setup would fail. Treat dangling refs as "no real material".
+    let referenced_paths_exist = ["IOS2NIX_P12_PATH", "IOS2NIX_PROFILE_PATH"]
+        .iter()
+        .all(|key| vars.get(*key).is_some_and(|p| Path::new(p).exists()));
+    if !referenced_paths_exist {
+        return Ok(None);
+    }
+
     // Throwaway password for the temp keychain the consumer creates (and deletes).
     vars.entry("IOS2NIX_KEYCHAIN_PASSWORD".to_string())
         .or_insert(random_password()?);
@@ -50,20 +65,53 @@ pub fn load_signing_vars(repo_root: &Path) -> anyhow::Result<Option<BTreeMap<Str
     Ok(Some(vars))
 }
 
-/// Run the `#[ignore]`-gated iOS signing integration tests when signing
-/// material is configured; skip with a note otherwise. CI never reaches this:
-/// fnx is local-dev only and CI's `cargo test` does not run ignored tests.
+/// Run the `#[ignore]`-gated iOS signing integration tests against the best
+/// available signing material:
+///
+/// * **Real material present and fully readable** → run the whole ignored
+///   `cli_tests` suite against it (the original e2e path, unchanged).
+/// * **Otherwise, on macOS** → mint throwaway self-signed material and run only
+///   the hermetic `simulate` test against it (it drives the real ios2nix
+///   sign-setup keychain import, provisioning parse, and re-sign + verify
+///   paths — the parts a self-signed cert can satisfy without Apple trust).
+/// * **Non-macOS** → skip with a note.
+///
+/// CI never reaches this: fnx is local-dev only and CI's `cargo test` does not
+/// run ignored tests.
 pub fn run_if_configured(repo_root: &Path) -> anyhow::Result<()> {
-    let Some(vars) = load_signing_vars(repo_root)? else {
+    if let Some(vars) = load_signing_vars(repo_root)? {
         eprintln!(
-            "fnx check: iOS signing e2e skipped ({SIGNING_ENV_FILE} not present or not macOS)"
+            "fnx check: running iOS signing e2e (real material; cargo test -p ios2nix --test cli_tests -- --ignored)..."
         );
+        return run_cli_tests(repo_root, &vars, None);
+    }
+
+    if !cfg!(target_os = "macos") {
+        eprintln!("fnx check: iOS signing e2e skipped (not macOS)");
         return Ok(());
-    };
+    }
 
     eprintln!(
-        "fnx check: running iOS signing e2e (cargo test -p ios2nix --test cli_tests -- --ignored)..."
+        "fnx check: no usable real signing material ({SIGNING_ENV_FILE} absent or its referenced \
+         p12/password/profile missing) — simulating with throwaway self-signed material..."
     );
+    let material =
+        super::signing_sim::mint().context("failed to mint simulated signing material")?;
+    eprintln!(
+        "fnx check: minted self-signed signing material; running iOS signing e2e (simulate; \
+         cargo test -p ios2nix --test cli_tests -- --ignored simulate)..."
+    );
+    run_cli_tests(repo_root, material.vars(), Some("simulate"))
+}
+
+/// Invoke the ignored `cli_tests` suite with the given IOS2NIX_* vars in the
+/// child env. An optional `name_filter` restricts the run to matching tests
+/// (used to select only the hermetic `simulate` test).
+fn run_cli_tests(
+    repo_root: &Path,
+    vars: &BTreeMap<String, String>,
+    name_filter: Option<&str>,
+) -> anyhow::Result<()> {
     let mut cmd = Command::new("cargo");
     cmd.args([
         "test",
@@ -74,9 +122,12 @@ pub fn run_if_configured(repo_root: &Path) -> anyhow::Result<()> {
         "--",
         "--ignored",
         "--test-threads=1",
-    ])
-    .current_dir(repo_root);
-    for (key, value) in &vars {
+    ]);
+    if let Some(filter) = name_filter {
+        cmd.arg(filter);
+    }
+    cmd.current_dir(repo_root);
+    for (key, value) in vars {
         cmd.env(key, value);
     }
 
