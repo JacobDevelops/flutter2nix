@@ -5,10 +5,19 @@ use std::time::Duration;
 
 use crate::resolve_cache::ResolveCache;
 
-/// Hard per-request ceiling. The CLI's --timeout-secs bounds the whole TAPI shim
-/// build (minutes are legitimate); a single HTTP request must never inherit that
-/// budget — one stale connection would stall the pipeline for the full duration.
+/// Hard per-request ceiling for small requests (sidecars, POMs, HEAD probes).
+/// The CLI's --timeout-secs bounds the whole TAPI shim build (minutes are
+/// legitimate); a single small HTTP request must never inherit that budget — one
+/// stale connection would stall the pipeline for the full duration.
 const MAX_HTTP_TIMEOUT_SECS: u64 = 60;
+
+/// Ceiling for a full *artifact body* download. Some repos (notably
+/// download.flutter.io) host no `.sha256` sidecar, so the only way to hash the
+/// artifact is to download the whole thing — and Flutter engine jars
+/// (`io.flutter:*_debug`) are 100–180 MB. The small-request 60s cap cannot fit
+/// those (especially under batch concurrency sharing bandwidth), so the
+/// download-and-hash fallback gets its own generous budget instead.
+const MAX_ARTIFACT_DOWNLOAD_SECS: u64 = 900;
 
 /// Process-wide HTTP client. `reqwest::Client` holds a connection pool internally;
 /// constructing one per request defeats keep-alive and pays a fresh TCP + TLS
@@ -59,6 +68,34 @@ async fn http_get(
                     per_try.as_secs(),
                     url
                 ));
+            }
+        }
+    }
+    Err(last.expect("loop ran at least once"))
+}
+
+/// GET a full artifact body with one retry, using the large
+/// `MAX_ARTIFACT_DOWNLOAD_SECS` budget instead of the small-request ceiling.
+/// The request-level `.timeout()` overrides the shared client's default
+/// whole-request timeout, so it also covers the subsequent body read
+/// (`.bytes()`) — which the small `MAX_HTTP_TIMEOUT_SECS` backstop would
+/// otherwise abort on a 100–180 MB engine jar.
+async fn http_get_artifact(client: &reqwest::Client, url: &str) -> anyhow::Result<reqwest::Response> {
+    let budget = Duration::from_secs(MAX_ARTIFACT_DOWNLOAD_SECS);
+    let mut last: Option<anyhow::Error> = None;
+    for attempt in 0..2 {
+        match client.get(url).timeout(budget).send().await {
+            Ok(resp) => return Ok(resp),
+            Err(e) => {
+                log::debug!(
+                    "artifact GET attempt {} failed for {}: {}",
+                    attempt + 1,
+                    url,
+                    e
+                );
+                last = Some(
+                    anyhow::Error::new(e).context(format!("artifact download failed for {}", url)),
+                );
             }
         }
     }
@@ -455,8 +492,10 @@ async fn fetch_sha256_http(
 
     if sha256_response.status() == reqwest::StatusCode::NOT_FOUND {
         // .sha256 sidecar not hosted (common for older Google Maven / Flutter storage artifacts).
-        // Download the artifact itself and compute SHA-256 from the bytes.
-        let art_response = http_get(client, &artifact_url, timeout_secs).await?;
+        // Download the artifact itself and compute SHA-256 from the bytes. Uses the
+        // large artifact-download budget: engine jars are 100–180 MB and the 60s
+        // small-request cap cannot fit them.
+        let art_response = http_get_artifact(client, &artifact_url).await?;
 
         if art_response.status() == reqwest::StatusCode::OK {
             let bytes = art_response
