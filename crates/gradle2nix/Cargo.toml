@@ -23,7 +23,7 @@ futures = "0.3"
 log = "0.4"
 nix-core = { path = "../nix-core" }
 regex = "1"
-reqwest = { version = "0.11", features = ["rustls-tls"] }
+reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

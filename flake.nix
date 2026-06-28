@@ -41,7 +41,9 @@
         };
 
         sharedNativeBuildInputs = [ pkgs.pkg-config ];
-        sharedBuildInputs = [ pkgs.openssl ];
+        # Empty: reqwest uses rustls, so no openssl/libssl is linked. Don't re-add
+        # openssl here — see the TLS-backend change that removed it.
+        sharedBuildInputs = [ ];
 
         fnx = rustPlatform.buildRustPackage {
           pname = "fnx";
@@ -81,9 +83,12 @@
             "-p"
             "gradle2nix"
           ];
+          # Lib tests only — the integration suite (cli/check-flutter-sdk/relocate-
+          # plugins/strip-dev-deps) needs python3 and runs in the cargo-test check.
           cargoTestFlags = [
             "-p"
             "gradle2nix"
+            "--lib"
           ];
           nativeBuildInputs = sharedNativeBuildInputs;
           buildInputs = sharedBuildInputs;
@@ -102,9 +107,11 @@
             "-p"
             "flutter2nix"
           ];
+          # Lib tests only — cli_tests is an integration suite run in the cargo-test check.
           cargoTestFlags = [
             "-p"
             "flutter2nix"
+            "--lib"
           ];
           nativeBuildInputs = sharedNativeBuildInputs;
           buildInputs = sharedBuildInputs;
@@ -288,14 +295,10 @@
               mkdir -p crates/gradle2nix/tapi-shim/build/libs
               cp ${tapi-shim-jar} crates/gradle2nix/tapi-shim/build/libs/tapi-shim.jar
             '';
-            # This custom buildPhase runs the test binaries directly (doCheck=false
-            # bypasses rustPlatform's checkPhase), so OpenSSL is not on the runtime
-            # loader path. flutter2nix's cli_tests link libssl (via reqwest) and die
-            # with "libssl.so.3: cannot open shared object file" without this.
-            buildPhase = ''
-              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.openssl ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-              cargo test --workspace
-            '';
+            # Custom buildPhase as the check (doCheck=false bypasses rustPlatform's
+            # checkPhase), mirroring the clippy check above. reqwest uses rustls, so
+            # no libssl is needed on the loader path.
+            buildPhase = "cargo test --workspace";
             installPhase = "mkdir -p $out";
             doCheck = false;
           };

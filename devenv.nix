@@ -32,7 +32,6 @@ in
   packages = with pkgs; [
     rust.toolchain
     pkg-config
-    openssl
     nixpkgs-fmt
     # fnx as a cargo-run wrapper: always built from the current worktree so it
     # reflects any in-progress changes without a shell reload.
@@ -55,8 +54,7 @@ in
   };
 
   enterShell = ''
-    export LD_LIBRARY_PATH="${pkgs.openssl.out}/lib:$LD_LIBRARY_PATH"
-    # Prevent Nix's OpenSSL/glibc from leaking into git/jj SSH subprocesses —
+    # Prevent Nix's glibc from leaking into git/jj SSH subprocesses —
     # system ssh picks up Nix libs and dies with a glibc symbol-version mismatch.
     export GIT_SSH_COMMAND='env -u LD_LIBRARY_PATH ssh'
     # Auto-write local.properties so Gradle can find the Flutter SDK and Android SDK.
