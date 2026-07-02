@@ -423,7 +423,9 @@ let
     };
 
 in
-{
+# rec: buildFlutterAndroidApp recurses into itself to build the incremental
+# native-shell variant.
+rec {
   inherit
     buildGradleProject
     scopeEngineNodes
@@ -574,7 +576,7 @@ in
   #                     for any repo reused across modes (e.g. an offlineGradleDevHook
   #                     dev shell that also debug-runs).
   buildFlutterAndroidApp =
-    {
+    args@{
       pkgs,
       src,
       name ? pubLib.pubspecName src,
@@ -588,6 +590,28 @@ in
       flutterBuildArgs ? [ ],
       consolidateMavenRepo ? false,
       engineModes ? null,
+      # "KEY=VALUE" --dart-define strings (mirrors buildFlutterIOSApp).
+      dartDefines ? [ ],
+      # Dart obfuscation + split-debug-info; symbol files surface as
+      # $out/debug-symbols (see installPhase).
+      obfuscate ? false,
+      splitDebugInfo ? "build/debug-symbols",
+      # Split the build into native-shell / dart-aot / assemble derivations so
+      # Dart-only edits reuse the cached Gradle shell and only rerun the AOT
+      # slice (docs/incremental-dart-builds.md). Sound because the AAB is
+      # unsigned — signing happens out-of-build (signAndroidAab re-signs the
+      # whole bundle). Do NOT enable if your Gradle build signs the bundle.
+      incrementalDart ? false,
+      # Dirs (relative to src) excluded from the native shell's inputs.
+      nativeShellExcludes ? [
+        "lib"
+        "test"
+        "assets"
+      ],
+      # Internal (split machinery): build this derivation as the native shell —
+      # filtered src + stub libapp.so fed to Gradle directly.
+      _dartStub ? false,
+      _buildSrc ? null,
       ...
     }:
     let
@@ -612,9 +636,173 @@ in
           flutterSdk
           ;
       };
-    in
-    pkgs.stdenv.mkDerivation {
-      inherit name src;
+      buildSrc = if _buildSrc != null then _buildSrc else src;
+
+      # --- incrementalDart split machinery (docs/incremental-dart-builds.md) ---
+      filteredSrc =
+        excludes:
+        lib.fileset.toSource {
+          root = src;
+          fileset = lib.fileset.difference src (
+            lib.fileset.unions (map (d: lib.fileset.maybeMissing (src + "/${d}")) excludes)
+          );
+        };
+
+      # native-shell: the full Gradle bundle build with stub Dart artifacts,
+      # keyed on everything EXCEPT nativeShellExcludes. Dart-tier knobs are
+      # stripped so they don't key the shell either.
+      nativeShell = buildFlutterAndroidApp (
+        args
+        // {
+          name = "${name}-native-shell";
+          incrementalDart = false;
+          dartDefines = [ ];
+          obfuscate = false;
+          _dartStub = true;
+          _buildSrc = filteredSrc nativeShellExcludes;
+        }
+      );
+
+      # dart-aot: gen_snapshot per ABI + flutter_assets, with android/ and ios/
+      # excluded from its inputs. Needs no Android SDK — the nixpkgs Flutter
+      # SDK's gen_snapshot emits ELF libapp.so directly. Mirrors the `flutter
+      # assemble` invocation the Flutter Gradle plugin's compileFlutterBuild
+      # task makes (BaseFlutterTaskHelper.kt), minus -dMinSdkVersion, which no
+      # android AOT/bundle target reads.
+      dartAot = pkgs.stdenv.mkDerivation {
+        name = "${name}-dart-aot";
+        src = filteredSrc [
+          "ios"
+          "android"
+        ];
+        buildInputs = [
+          flutterSdk
+          pkgs.git
+        ];
+        meta.platforms = lib.platforms.linux;
+        buildPhase = ''
+          runHook preBuild
+          export HOME="$NIX_BUILD_TOP"
+          printf '[safe]\n\tdirectory = *\n' > "$HOME/.gitconfig"
+
+          mkdir -p .dart_tool
+          cp ${packageConfig} .dart_tool/package_config.json
+          chmod u+w .dart_tool/package_config.json
+          install -m644 ${pubspecLockFile} pubspec.lock
+          ${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3 \
+            ${pkgs.path}/pkgs/build-support/dart/pub2nix/package-graph.py \
+            > .dart_tool/package_graph.json
+          rm -f .flutter-plugins-dependencies
+          ${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3 \
+            ${./generate-flutter-plugins.py} "${flutterSdk.version}"
+          ${pkgs.python3}/bin/python3 ${./check-flutter-sdk.py} "${flutterSdk}"
+
+          # -dTreeShakeIcons=true: `flutter build appbundle` (the monolithic
+          # path) tree-shakes icon fonts by default in release mode, so the
+          # AOT tier must too or the swapped flutter_assets diverge.
+          assemble_flags=(
+            --no-version-check
+            --output="$NIX_BUILD_TOP/aot"
+            -dTargetFile=lib/main.dart
+            -dTargetPlatform=android
+            -dBuildMode=release
+            -dTrackWidgetCreation=true
+            -dTreeShakeIcons=true
+            -dDartObfuscation=${if obfuscate then "true" else "false"}
+            ${lib.optionalString obfuscate "-dSplitDebugInfo=${splitDebugInfo}"}
+            -dAndroidArchs="android-arm android-arm64 android-x64"
+          )
+          dart_defines=(${lib.concatStringsSep " " (map lib.escapeShellArg dartDefines)})
+          if [ "''${#dart_defines[@]}" -gt 0 ]; then
+            encoded=""
+            for d in "''${dart_defines[@]}"; do
+              enc=$(printf '%s' "$d" | base64 | tr -d '\n')
+              encoded="''${encoded:+$encoded,}$enc"
+            done
+            assemble_flags+=("--DartDefines=$encoded")
+          fi
+
+          flutter assemble "''${assemble_flags[@]}" \
+            android_aot_bundle_release_android-arm \
+            android_aot_bundle_release_android-arm64 \
+            android_aot_bundle_release_android-x64
+          runHook postBuild
+        '';
+        installPhase = ''
+          runHook preInstall
+          mkdir -p $out
+          for abi in armeabi-v7a arm64-v8a x86_64; do
+            cp -R "$NIX_BUILD_TOP/aot/$abi" $out/
+          done
+          cp -R "$NIX_BUILD_TOP/aot/flutter_assets" $out/
+          ${lib.optionalString obfuscate ''
+            if [ -n "$(find ${splitDebugInfo} -type f 2>/dev/null)" ]; then
+              mkdir -p $out/debug-symbols
+              cp -R ${splitDebugInfo}/. $out/debug-symbols/
+            fi
+          ''}
+          runHook postInstall
+        '';
+      };
+
+      # assemble: copy the shell output and swap the stub entries inside the
+      # AAB (a zip) for the real dart-aot artifacts. Sound only because the
+      # AAB is unsigned — signing happens out-of-build (signAndroidAab).
+      assembled =
+        pkgs.runCommand name
+          {
+            nativeBuildInputs = [ pkgs.zip ];
+            meta.platforms = lib.platforms.linux;
+            passthru = {
+              inherit (gradle) mavenRepo initScript;
+              inherit packageConfig nativeShell dartAot;
+              offlineDeps = nativeShell.offlineDeps;
+            };
+          }
+          ''
+            mkdir -p $out
+            cp -R ${nativeShell}/. $out/
+            chmod -R u+w $out
+            aab=$(find $out -maxdepth 1 -name '*.aab' | head -n1)
+            if [ -z "$aab" ]; then
+              echo "flutter2nix incrementalDart: no .aab in the native-shell output" >&2
+              exit 1
+            fi
+
+            # Stage the real Dart artifacts under the AAB's entry paths.
+            staging="$NIX_BUILD_TOP/staging"
+            for abi in armeabi-v7a arm64-v8a x86_64; do
+              if [ -e "${dartAot}/$abi/app.so" ]; then
+                install -D -m644 "${dartAot}/$abi/app.so" "$staging/base/lib/$abi/libapp.so"
+              fi
+            done
+            mkdir -p "$staging/base/assets"
+            cp -R ${dartAot}/flutter_assets "$staging/base/assets/flutter_assets"
+            chmod -R u+w "$staging"
+            # zip refuses pre-1980 mtimes (Nix store files sit at the epoch);
+            # -X keeps the bumped timestamps out of the archive entries anyway.
+            find "$staging" -exec touch -t 198001010000 {} +
+
+            # The stub flutter_assets entry set differs from the real one:
+            # delete the stale tree, then add/overwrite in place. libapp.so
+            # entries are same-name and simply overwritten. No zipalign
+            # concerns — alignment applies to the APKs bundletool derives
+            # later, not to the AAB itself.
+            zip -q -d "$aab" 'base/assets/flutter_assets/*' || true
+            (cd "$staging" && zip -q -X -r "$aab" base)
+
+            ${lib.optionalString obfuscate ''
+              if [ -d "${dartAot}/debug-symbols" ]; then
+                rm -rf "$out/debug-symbols"
+                mkdir -p "$out/debug-symbols"
+                cp -R "${dartAot}/debug-symbols/." "$out/debug-symbols/"
+              fi
+            ''}
+          '';
+
+      monolithic = pkgs.stdenv.mkDerivation {
+      inherit name;
+      src = buildSrc;
       # git: flutter_tools requires it on PATH at startup. The nixpkgs Flutter
       # wrapper bundles its own; raw Google-tarball SDKs do not.
       buildInputs = gradle.buildInputs ++ [
@@ -746,7 +934,59 @@ in
                 # --no-configuration-cache, --init-script) that flutter build does NOT accept.
                 # The init script is auto-loaded from $GRADLE_USER_HOME/init.d/. --no-pub skips
                 # pub get since PUB_CACHE is already populated.
-                flutter build appbundle --no-pub ${lib.escapeShellArgs flutterBuildArgs}
+                ${
+                  if _dartStub then
+                    ''
+                      # Incremental native shell: deterministic stub Dart artifacts in the
+                      # intermediate dir the Flutter Gradle plugin reads AOT output from,
+                      # then Gradle driven directly with the Dart compile task excluded.
+                      # The assemble derivation swaps the stubs for real dart-aot output.
+                      ndk_bin="$(find -L "$ANDROID_SDK_ROOT/ndk" -path '*/toolchains/llvm/prebuilt/*/bin' -type d 2>/dev/null | head -n1)"
+                      if [ -z "$ndk_bin" ]; then
+                        echo "ERROR: incrementalDart needs an NDK under $ANDROID_SDK_ROOT/ndk to build the stub libapp.so" >&2
+                        exit 1
+                      fi
+                      printf 'const unsigned char kFlutter2nixStubApp = 1;\n' > "$NIX_BUILD_TOP/stub.c"
+                      flutter_intermediate=build/app/intermediates/flutter/release
+                      for tgt in aarch64-linux-android21:arm64-v8a armv7a-linux-androideabi21:armeabi-v7a x86_64-linux-android21:x86_64; do
+                        abi="''${tgt##*:}"
+                        mkdir -p "$flutter_intermediate/$abi"
+                        "$ndk_bin/clang" --target="''${tgt%%:*}" -shared \
+                          -o "$flutter_intermediate/$abi/app.so" "$NIX_BUILD_TOP/stub.c"
+                      done
+                      # Marker so a stub that accidentally ships is identifiable.
+                      mkdir -p "$flutter_intermediate/flutter_assets"
+                      touch "$flutter_intermediate/flutter_assets/flutter2nix-stub"
+                      # flutter_tools normally stamps the pubspec version into
+                      # local.properties for the Gradle plugin; driving Gradle
+                      # directly means doing it here.
+                      version_line="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n1 | tr -d '[:space:]')"
+                      version_name="''${version_line%%+*}"
+                      version_code="''${version_line##*+}"
+                      [ -n "$version_name" ] || version_name=1.0.0
+                      { [ -n "$version_code" ] && [ "$version_code" != "$version_line" ]; } || version_code=1
+                      printf 'flutter.versionName=%s\nflutter.versionCode=%s\n' \
+                        "$version_name" "$version_code" >> android/local.properties
+                      # ponytail: assumes the template module name :app; parameterize
+                      # only if a consumer ever renames the module.
+                      (cd android && ./gradlew :app:bundleRelease \
+                        -x :app:compileFlutterBuildRelease \
+                        -Ptarget-platform=android-arm,android-arm64,android-x64)
+                    ''
+                  else
+                    ''
+                      flutter build appbundle --no-pub ${
+                        lib.escapeShellArgs (
+                          flutterBuildArgs
+                          ++ map (d: "--dart-define=${d}") dartDefines
+                          ++ lib.optionals obfuscate [
+                            "--obfuscate"
+                            "--split-debug-info=${splitDebugInfo}"
+                          ]
+                        )
+                      }
+                    ''
+                }
                 runHook postBuild
       '';
       installPhase = ''
@@ -781,14 +1021,16 @@ in
           mkdir -p $out/mapping
           cp -R "$mappingDir"/. $out/mapping/
         fi
-        # --split-debug-info=build/debug-symbols (see infra/nix/mobile-android.nix)
-        # writes app.android-*.symbols here, relative to the flutter build cwd
-        # (the unpacked source root), which is also the installPhase cwd.
-        if [ -n "$(find build/debug-symbols -type f 2>/dev/null)" ]; then
+        # --split-debug-info=${splitDebugInfo} writes app.android-*.symbols
+        # there, relative to the flutter build cwd (the unpacked source root),
+        # which is also the installPhase cwd.
+        if [ -n "$(find ${splitDebugInfo} -type f 2>/dev/null)" ]; then
           mkdir -p $out/debug-symbols
-          cp -R build/debug-symbols/. $out/debug-symbols/
+          cp -R ${splitDebugInfo}/. $out/debug-symbols/
         fi
         runHook postInstall
       '';
-    };
+      };
+    in
+    if incrementalDart then assembled else monolithic;
 }

@@ -215,6 +215,60 @@
                   lockFile = ./tests/fixtures/flutter/minimal-app/flutter2nix.lock;
                 }).ios;
             };
+        # Incremental fixture (docs/incremental-dart-builds.md): the same app
+        # built monolithic and split — mono/split must differ ONLY in
+        # incrementalDart so the equivalence diff is meaningful. Exposed as
+        # packages but deliberately NOT in the `.#e2e` aggregate: `fnx check`
+        # stays the cheap monolithic regression tier; the incremental
+        # equivalence/keying tests build these explicitly.
+        incrementalAppArgs = {
+          inherit pkgs;
+          src = ./tests/fixtures/flutter/incremental-app;
+          lockFile = ./tests/fixtures/flutter/incremental-app/flutter2nix.lock;
+          dartDefines = [ "BUILD_FLAVOR=fixture" ];
+          obfuscate = true;
+          produceArchive = true;
+        };
+        incrementalE2e =
+          pkgs.lib.optionalAttrs
+            (builtins.pathExists ./tests/fixtures/flutter/incremental-app/flutter2nix.lock)
+            (
+              if pkgs.stdenv.isLinux then
+                {
+                  incremental-app-mono =
+                    (self.lib.buildFlutterApp (
+                      incrementalAppArgs
+                      // {
+                        inherit androidSdk;
+                        name = "incremental-app-mono";
+                      }
+                    )).android;
+                  incremental-app-split =
+                    (self.lib.buildFlutterApp (
+                      incrementalAppArgs
+                      // {
+                        inherit androidSdk;
+                        name = "incremental-app-split";
+                        incrementalDart = true;
+                      }
+                    )).android;
+                }
+              else if pkgs.stdenv.isDarwin then
+                {
+                  incremental-app-mono =
+                    (self.lib.buildFlutterApp (incrementalAppArgs // { name = "incremental-app-mono"; })).ios;
+                  incremental-app-split =
+                    (self.lib.buildFlutterApp (
+                      incrementalAppArgs
+                      // {
+                        name = "incremental-app-split";
+                        incrementalDart = true;
+                      }
+                    )).ios;
+                }
+              else
+                { }
+            );
         # Whole-suite aggregate: `nix build .#e2e` realises every e2e entry.
         # Empty no-op derivation when the platform/fixture gates are closed.
         e2eAll = pkgs.linkFarm "e2e-all" (
@@ -235,7 +289,8 @@
           inherit ios2nix;
         }
         // e2eTests
-        // iosE2eTests;
+        // iosE2eTests
+        // incrementalE2e;
 
         # Inject binaries into pkgs for use in derivations (especially ios2nix for signing workflows).
         pkgs =
@@ -629,6 +684,52 @@
               drv = result.android or result.ios;
             in
             builtins.seq drv.drvPath (pkgs.runCommand "buildFlutterApp-eval" { } "touch $out");
+          # incrementalDart split (docs/incremental-dart-builds.md): full
+          # instantiation of the split derivation, passthru of the sub-drvs,
+          # and the keying invariant an eval can prove — a Dart-tier knob
+          # (dartDefines) must key dart-aot but NOT the native shell.
+          incrementalDart-split-eval =
+            let
+              mk =
+                extra:
+                self.lib.buildFlutterApp (
+                  {
+                    inherit pkgs;
+                    name = "incremental-split-eval";
+                    src = ./tests/fixtures/flutter/minimal-app;
+                    lockFile = ./tests/fixtures/flutter/minimal-app/flutter2nix.lock;
+                    androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
+                    incrementalDart = true;
+                  }
+                  // extra
+                );
+              pick = result: result.android or result.ios;
+              drv = pick (mk { });
+              defined = pick (mk { dartDefines = [ "A=1" ]; });
+            in
+            assert pkgs.lib.assertMsg (drv ? nativeShell && drv ? dartAot)
+              "the split derivation must passthru its nativeShell and dartAot sub-derivations";
+            assert pkgs.lib.assertMsg (drv.nativeShell.drvPath == defined.nativeShell.drvPath)
+              "dartDefines is a Dart-tier knob and must not key the native shell";
+            assert pkgs.lib.assertMsg (drv.dartAot.drvPath != defined.dartAot.drvPath)
+              "dartDefines must key the dart-aot derivation";
+            builtins.seq drv.drvPath (pkgs.runCommand "incrementalDart-split-eval" { } "touch $out");
+          # incrementalDart + in-build signing is unsound (the Dart swap happens
+          # after xcodebuild, breaking any signature) — must throw, not build.
+          incrementalDart-signing-throws-eval =
+            let
+              drv = self.lib.buildFlutterIOSApp {
+                inherit pkgs;
+                name = "incremental-signing-eval";
+                src = ./tests/fixtures/flutter/minimal-app;
+                lockFile = ./tests/fixtures/flutter/minimal-app/flutter2nix.lock;
+                incrementalDart = true;
+                signing = { };
+              };
+            in
+            assert pkgs.lib.assertMsg (!(builtins.tryEval (builtins.seq drv.drvPath true)).success)
+              "buildFlutterIOSApp must throw when incrementalDart is combined with in-build signing";
+            pkgs.runCommand "incrementalDart-signing-throws-eval" { } "touch $out";
           default = pkgs.runCommand "flake-check-ok" { } "echo ok > $out";
           # iOS checks are darwin-gated; ios-pods-sandbox-test realises a real
           # fixed-output git fetch (analogue of android-maven-repo-test).

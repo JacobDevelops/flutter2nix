@@ -52,8 +52,19 @@ let
   #                     apps use "Release-<flavor>" (e.g. "Release-stag"); this
   #                     drives flavor-keyed build phases (e.g. the per-flavor
   #                     GoogleService-Info copy script).
+  #   incrementalDart — split the build into three derivations (native-shell /
+  #                     dart-aot / assemble, docs/incremental-dart-builds.md) so
+  #                     Dart-only edits reuse the cached native shell and only
+  #                     rebuild the cheap AOT slice. ONLY sound for unsigned
+  #                     output: the swap happens after xcodebuild, so it throws
+  #                     when signing != null — sign the emitted archive
+  #                     out-of-build. Default false (monolithic).
+  #   nativeShellExcludes — dirs (relative to src) excluded from the native
+  #                     shell's inputs; edits under them must not rebuild the
+  #                     shell. Default [ "lib" "test" "assets" ]; adjust if your
+  #                     layout keys Dart-tier files elsewhere (e.g. codegen).
   buildFlutterIOSApp =
-    {
+    args@{
       pkgs,
       src,
       name ? pubLib.pubspecName src,
@@ -74,6 +85,16 @@ let
       # $out/debug-symbols (mirroring the Android gradle2nix-lib).
       obfuscate ? false,
       splitDebugInfo ? "build/debug-symbols",
+      incrementalDart ? false,
+      nativeShellExcludes ? [
+        "lib"
+        "test"
+        "assets"
+      ],
+      # Internal (split machinery): build this derivation as the native shell —
+      # filtered src + the stub xcode_backend via shimFlutterSdk.
+      _dartStub ? false,
+      _buildSrc ? null,
       ...
     }:
     let
@@ -88,9 +109,210 @@ let
           ;
       };
       podsSandbox = iosLib.buildPodsSandbox pkgs (iosLib.readPods lockFile);
-    in
-    pkgs.stdenv.mkDerivation {
-      inherit name src;
+      buildSrc = if _buildSrc != null then _buildSrc else src;
+
+      # --- incrementalDart split machinery (docs/incremental-dart-builds.md) ---
+      filteredSrc =
+        excludes:
+        lib.fileset.toSource {
+          root = src;
+          fileset = lib.fileset.difference src (
+            lib.fileset.unions (map (d: lib.fileset.maybeMissing (src + "/${d}")) excludes)
+          );
+        };
+
+      stubBackend = pkgs.replaceVars ./xcode-backend-stub.sh {
+        flutterSdk = "${flutterSdk}";
+      };
+      # Symlink view of the Flutter SDK with only xcode_backend.sh replaced by
+      # the stub. Only the native shell's Generated.xcconfig points FLUTTER_ROOT
+      # here; bin/flutter, podhelper.rb and the engine artifacts resolve through
+      # the symlinks to the real SDK, so everything else behaves identically.
+      shimFlutterSdk = pkgs.runCommand "flutter-sdk-stub-xcode-backend" { } ''
+        shopt -s dotglob
+        mkdir -p $out/packages/flutter_tools/bin
+        for e in ${flutterSdk}/*; do
+          [ "$(basename "$e")" = packages ] || ln -s "$e" "$out/"
+        done
+        for e in ${flutterSdk}/packages/*; do
+          [ "$(basename "$e")" = flutter_tools ] || ln -s "$e" "$out/packages/"
+        done
+        for e in ${flutterSdk}/packages/flutter_tools/*; do
+          [ "$(basename "$e")" = bin ] || ln -s "$e" "$out/packages/flutter_tools/"
+        done
+        for e in ${flutterSdk}/packages/flutter_tools/bin/*; do
+          [ "$(basename "$e")" = xcode_backend.sh ] || ln -s "$e" "$out/packages/flutter_tools/bin/"
+        done
+        install -m755 ${stubBackend} $out/packages/flutter_tools/bin/xcode_backend.sh
+      '';
+
+      # native-shell: the full xcodebuild with a stub App.framework, keyed on
+      # everything EXCEPT nativeShellExcludes. Dart-tier knobs (dartDefines,
+      # obfuscation) are stripped so they don't key the shell either.
+      nativeShell = buildFlutterIOSApp (
+        args
+        // {
+          name = "${name}-native-shell";
+          incrementalDart = false;
+          dartDefines = [ ];
+          obfuscate = false;
+          _dartStub = true;
+          _buildSrc = filteredSrc nativeShellExcludes;
+        }
+      );
+
+      # dart-aot: everything Dart — AOT snapshot, flutter_assets, dSYM, split
+      # debug info — with ios/ and android/ excluded from its inputs. Mirrors
+      # the `flutter assemble` invocation xcode_backend.sh makes inside the Run
+      # Script, minus Xcode-only context (SrcRoot, TargetDeviceOSVersion) that
+      # does not affect the emitted App.framework.
+      dartAot = pkgs.stdenv.mkDerivation {
+        name = "${name}-dart-aot";
+        # ios/ and android/ excluded, except ios/Flutter/AppFrameworkInfo.plist:
+        # IosAssetBundle copies it into App.framework/Info.plist, so it is a
+        # genuine dart-aot input and must key this derivation.
+        src = lib.fileset.toSource {
+          root = src;
+          fileset = lib.fileset.unions [
+            (lib.fileset.difference src (
+              lib.fileset.unions [
+                (lib.fileset.maybeMissing (src + "/ios"))
+                (lib.fileset.maybeMissing (src + "/android"))
+              ]
+            ))
+            (lib.fileset.maybeMissing (src + "/ios/Flutter/AppFrameworkInfo.plist"))
+          ];
+        };
+        __noChroot = true;
+        meta.platforms = lib.platforms.darwin;
+        buildInputs = [ flutterSdk ];
+        buildPhase = ''
+          runHook preBuild
+          export HOME="$NIX_BUILD_TOP"
+          printf '[safe]\n\tdirectory = *\n' > "$HOME/.gitconfig"
+
+          mkdir -p .dart_tool
+          cp ${packageConfig} .dart_tool/package_config.json
+          chmod u+w .dart_tool/package_config.json
+          install -m644 ${pubspecLockFile} pubspec.lock
+          ${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3 \
+            ${pkgs.path}/pkgs/build-support/dart/pub2nix/package-graph.py \
+            > .dart_tool/package_graph.json
+          rm -f .flutter-plugins-dependencies
+          ${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3 \
+            ${./generate-flutter-plugins.py} "$(cat ${flutterSdk}/version)"
+
+          assemble_flags=(
+            --no-version-check
+            --output="$NIX_BUILD_TOP/aot/"
+            -dTargetPlatform=ios
+            -dTargetFile=lib/main.dart
+            -dBuildMode=release
+            -dConfiguration=${configuration}
+            -dIosArchs=arm64
+            # env -i: stdenv exports DEVELOPER_DIR pointing at the Nix apple-sdk,
+            # which has no iphoneos SDK — xcrun must see the system Xcode.
+            -dSdkRoot="$(env -i PATH=/usr/bin:/bin /usr/bin/xcrun --sdk iphoneos --show-sdk-path)"
+            -dAction=install
+            -dTrackWidgetCreation=true
+            -dTreeShakeIcons=false
+            -dDartObfuscation=${if obfuscate then "true" else "false"}
+            ${lib.optionalString obfuscate "-dSplitDebugInfo=${splitDebugInfo}"}
+          )
+          dart_defines=(${lib.concatStringsSep " " (map lib.escapeShellArg dartDefines)})
+          if [ "''${#dart_defines[@]}" -gt 0 ]; then
+            encoded=""
+            for d in "''${dart_defines[@]}"; do
+              enc=$(printf '%s' "$d" | base64 | tr -d '\n')
+              encoded="''${encoded:+$encoded,}$enc"
+            done
+            assemble_flags+=("--DartDefines=$encoded")
+          fi
+
+          # env -i for the same reason as xcodebuild in the shell build: the
+          # AOT snapshot links via xcrun clang, which must not see the Nix
+          # toolchain env (CC/LD/NIX_* mangle the link step).
+          # Real rsync required: flutter's UnpackIOS copies Flutter.framework
+          # out of the read-only store with `rsync --chmod=...u+w`; macOS
+          # openrsync ignores --chmod, leaving it unwritable for codesign.
+          env -i \
+            HOME="$HOME" \
+            LANG=en_US.UTF-8 \
+            LC_ALL=en_US.UTF-8 \
+            PATH="${flutterSdk}/bin:${pkgs.rsync}/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+            flutter assemble "''${assemble_flags[@]}" release_ios_bundle_flutter_assets
+          runHook postBuild
+        '';
+        installPhase = ''
+          runHook preInstall
+          mkdir -p $out
+          cp -R "$NIX_BUILD_TOP/aot/App.framework" $out/
+          if [ -d "$NIX_BUILD_TOP/aot/App.framework.dSYM" ]; then
+            cp -R "$NIX_BUILD_TOP/aot/App.framework.dSYM" $out/
+          fi
+          ${lib.optionalString obfuscate ''
+            if [ -n "$(find ${splitDebugInfo} -type f 2>/dev/null)" ]; then
+              mkdir -p $out/debug-symbols
+              cp -R ${splitDebugInfo}/. $out/debug-symbols/
+            fi
+          ''}
+          runHook postInstall
+        '';
+      };
+
+      # assemble: copy the shell output and swap the stub App.framework (and
+      # its dSYM in an archive) for the real one. Sound only because the shell
+      # output is unsigned — see the incrementalDart throw below.
+      assembled =
+        pkgs.runCommand name
+          {
+            meta.platforms = lib.platforms.darwin;
+            passthru = {
+              inherit packageConfig podsSandbox nativeShell dartAot;
+              offlineDeps = nativeShell.offlineDeps;
+            };
+          }
+          ''
+            mkdir -p $out
+            cp -R ${nativeShell}/. $out/
+            chmod -R u+w $out
+
+            ${
+              if produceArchive then
+                ''app=$(echo "$out/Runner.xcarchive/Products/Applications/"*.app)''
+              else
+                ''app=$(echo "$out/"*.app)''
+            }
+            if [ ! -d "$app" ]; then
+              echo "flutter2nix incrementalDart: no .app in the native-shell output" >&2
+              exit 1
+            fi
+
+            # In release mode everything Dart lives in App.framework (binary +
+            # flutter_assets), so the swap is one directory replace.
+            rm -rf "$app/Frameworks/App.framework"
+            cp -R ${dartAot}/App.framework "$app/Frameworks/App.framework"
+
+            ${lib.optionalString produceArchive ''
+              if [ -d "${dartAot}/App.framework.dSYM" ]; then
+                mkdir -p "$out/Runner.xcarchive/dSYMs"
+                chmod -R u+w "$out/Runner.xcarchive/dSYMs"
+                rm -rf "$out/Runner.xcarchive/dSYMs/App.framework.dSYM"
+                cp -R "${dartAot}/App.framework.dSYM" "$out/Runner.xcarchive/dSYMs/"
+              fi
+            ''}
+            ${lib.optionalString obfuscate ''
+              if [ -d "${dartAot}/debug-symbols" ]; then
+                rm -rf "$out/debug-symbols"
+                mkdir -p "$out/debug-symbols"
+                cp -R "${dartAot}/debug-symbols/." "$out/debug-symbols/"
+              fi
+            ''}
+          '';
+
+      monolithic = pkgs.stdenv.mkDerivation {
+      inherit name;
+      src = buildSrc;
       __noChroot = true;
       meta.platforms = lib.platforms.darwin;
       # Surface the network-bound offline layers (the CocoaPods sandbox and the
@@ -157,7 +379,7 @@ let
         # it for the sandbox copy.
         mkdir -p ios/Flutter
         {
-          printf 'FLUTTER_ROOT=%s\n' '${flutterSdk}'
+          printf 'FLUTTER_ROOT=%s\n' '${if _dartStub then shimFlutterSdk else flutterSdk}'
           printf 'FLUTTER_APPLICATION_PATH=%s\n' "$PWD"
           printf 'COCOAPODS_PARALLEL_CODE_SIGN=true\n'
           printf 'FLUTTER_TARGET=lib/main.dart\n'
@@ -169,6 +391,13 @@ let
           printf 'TREE_SHAKE_ICONS=false\n'
           printf 'PACKAGE_CONFIG=.dart_tool/package_config.json\n'
         } > ios/Flutter/Generated.xcconfig
+        ${lib.optionalString _dartStub ''
+          # Native-shell mode: xcconfig settings are exported into Run Script
+          # environments; the stub xcode_backend (FLUTTER_ROOT above points at
+          # the shim SDK) sees this flag and fakes App.framework instead of
+          # running the Dart AOT build.
+          printf 'FLUTTER2NIX_DART_STUB=true\n' >> ios/Flutter/Generated.xcconfig
+        ''}
 
         # Inject --dart-define values the way `flutter build` does: DART_DEFINES
         # is a comma-separated list of base64(KEY=VALUE) that xcode_backend.sh
@@ -363,6 +592,13 @@ let
         runHook postInstall
       '';
     };
+    in
+    if incrementalDart && signing != null then
+      throw "buildFlutterIOSApp: incrementalDart is only sound for UNSIGNED output — the Dart swap happens after xcodebuild, so an in-build signature would be broken. Keep signing = null (produceArchive = true) and sign the emitted archive out-of-build with `xcodebuild -exportArchive`."
+    else if incrementalDart then
+      assembled
+    else
+      monolithic;
 
   # Unified entry point for building Flutter apps for one or more platforms.
   # Dispatches to buildFlutterAndroidApp (Android) and buildFlutterIOSApp (iOS)
@@ -400,6 +636,13 @@ let
   #                     incremental transfer (every lockfile version becomes a
   #                     full ~5.6GB NAR), so leave it false unless your runners are
   #                     ephemeral. Forwarded to buildFlutterAndroidApp.
+  #   incrementalDart — split each platform build into native-shell / dart-aot /
+  #                     assemble derivations so Dart-only edits reuse the cached
+  #                     native shell (docs/incremental-dart-builds.md). Unsigned
+  #                     output only — iOS throws when combined with signing.
+  #   nativeShellExcludes — dirs excluded from the native shell's inputs
+  #                     (default [ "lib" "test" "assets" ]); see the platform
+  #                     builders.
   #   engineModes     — Android only; default null = keep the all-modes Flutter
   #                     engine superset (one repo serves debug dev runs AND release
   #                     CI). Set to the build's actual engine mode(s) — e.g.
@@ -471,7 +714,12 @@ let
             ;
           jdk = args.jdk or pkgs.jdk17;
           flutterBuildArgs = args.flutterBuildArgs or [ ];
+          dartDefines = args.dartDefines or [ ];
+          obfuscate = args.obfuscate or false;
+          splitDebugInfo = args.splitDebugInfo or "build/debug-symbols";
+          incrementalDart = args.incrementalDart or false;
         }
+        // lib.optionalAttrs (args ? nativeShellExcludes) { inherit (args) nativeShellExcludes; }
         # Only forward an explicit gradlePackage: when absent,
         # buildFlutterAndroidApp autodetects from gradle-wrapper.properties.
         // lib.optionalAttrs (args ? gradlePackage) { inherit (args) gradlePackage; }
@@ -497,7 +745,9 @@ let
           configuration = args.configuration or "Release";
           obfuscate = args.obfuscate or false;
           splitDebugInfo = args.splitDebugInfo or "build/debug-symbols";
+          incrementalDart = args.incrementalDart or false;
         }
+        // lib.optionalAttrs (args ? nativeShellExcludes) { inherit (args) nativeShellExcludes; }
       );
 
       result =

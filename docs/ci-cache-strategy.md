@@ -69,6 +69,7 @@ Split caching effort by how often each class changes. Most-stable first:
 |------|----------|--------------|-------------------|
 | Toolchain / SDK | `pkgs.flutter`, Android SDK, JDK, Gradle, Rust toolchain | nixpkgs / flake.lock bump | cache.nixos.org (mostly) |
 | Dependencies | offline Maven repo, pub deps, CocoaPods pods | `gradle2nix.lock` / `pubspec.lock` / `Podfile.lock` bump | your private cache |
+| Native shell (`incrementalDart` only) | `<app>-native-shell` derivation — full Gradle/Xcode build with stub Dart artifact | native-platform edits (`android/`, `ios/`, plugins, deps) — **not** `lib/`/`assets/` edits | your private cache — **must be pushed** |
 | Build outputs | APK / AAB / IPA, gradle/flutter build dirs | every source edit | don't cache — cheap to rebuild given warm deps |
 | Lock-time | gradle2nix resolve-cache (`resolve-cache.json`) | new/changed deps during `lock` | persist by a stable key (tiny JSON) |
 
@@ -78,6 +79,16 @@ Two consequences:
   `assembleRelease` / `flutter build` is minutes, not the bottleneck. Caching the
   volatile output churns the cache for little benefit (cache save cost > restore
   benefit).
+- **With `incrementalDart = true`, the native-shell derivation is the new
+  expensive tier — CI must push it.** The whole point of the split is that a
+  Dart-only edit substitutes the shell from cache and rebuilds only the cheap
+  dart-aot slice. If your CI never pushes `<app>-native-shell` (exposed as
+  `passthru.nativeShell` on the split build), every runner rebuilds the full
+  Gradle/Xcode shell and the split buys nothing. Push the split app's closure
+  (`nix copy --to <cache> .#my-app-split` covers the shell transitively) or the
+  shell derivation explicitly. The "don't cache build outputs" rule below does
+  **not** apply to the shell: it is expensive, changes only on native-side
+  edits, and is shared across every Dart iteration.
 - **The gradle2nix resolve-cache is a *lock-time* cache, not a build cache.** It
   lives at `{gradle-user-home}/caches/gradle2nix/resolve-cache.json` and only
   speeds up regenerating the lockfile (resolved SHA-256s, POM texts, confirmed

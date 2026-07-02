@@ -1,7 +1,11 @@
 # Incremental Dart-only builds (design + implementation plan)
 
-Status: **planned** — groundwork landed (`3e641ba`: package-config keyed on
-pubspec files only), derivation split not yet implemented.
+Status: **implemented** — the three-derivation split (native-shell / dart-aot /
+assemble) is live for both platforms behind `incrementalDart = true`, with the
+`incremental-app` fixture, `.#incremental-app-mono`/`.#incremental-app-split`
+flake packages, eval checks, and `fnx bench --target ios-incremental /
+android-incremental`. See the README's "Incremental Dart-only rebuilds" section
+for consumer-facing usage.
 
 Audience: an agent working **inside this repo only**. Everything below is
 testable with the fixtures in `tests/fixtures/` plus one richer fixture you
@@ -36,7 +40,8 @@ native-shell (expensive, cached across Dart edits)
 
 dart-aot (cheap, rebuilt on every Dart edit)
   inputs: lib/, assets/, pubspec.yaml+lock, package-config, engine,
-          dartDefines, obfuscation/split-debug-info flags
+          dartDefines, obfuscation/split-debug-info flags,
+          ios/Flutter/AppFrameworkInfo.plist (copied into App.framework/Info.plist)
   build:  flutter assemble producing the real App.framework (+flutter_assets)
           or per-ABI libapp.so + assets, plus .symbols / obfuscation map
 
@@ -96,7 +101,9 @@ enable the split.
   consumers with codegen into `ios/`/`android/` need to widen it). If only
   excluded paths change, the shell drv hash must not move. This is testable
   (below).
-- `dart-aot` excludes `ios/`/`android/`.
+- `dart-aot` excludes `ios/`/`android/`, except
+  `ios/Flutter/AppFrameworkInfo.plist` which flutter copies into
+  `App.framework/Info.plist`.
 - Keep the monolithic path as the default; expose the split behind
   `incrementalDart = true` on `buildFlutterApp` so consumers opt in.
 
@@ -182,9 +189,62 @@ Acceptance: every entry hash matches, EXCEPT a documented allowlist of
 known-nondeterministic files (enumerate them — e.g. embedded timestamps — do
 not hand-wave). Also assert the swapped `App.framework` and its dSYM share a
 debug-id (`dwarfdump --uuid`) or Sentry symbolication silently breaks.
-Runtime smoke before shipping: boot the split iOS build in a simulator /
-install the AAB-derived APK (`bundletool build-apks`) in an emulator and
-reach first frame, confirming the plugin and the asset render.
+
+#### Executed results — iOS (macOS arm64, Xcode toolchain, 2026-07)
+
+Ran against `.#incremental-app-mono` vs `.#incremental-app-split`. Result:
+**zero files missing on either side; 10 files differ in content, all
+accounted for by the allowlist below; within each build the
+`App.framework` binary and its dSYM share a debug-id** (mono
+`B43B66DF-2600-3DEA-85C6-95376F46A411`, split
+`BE48F7E2-37D7-3944-A5E5-CA514A406F4B`), so Sentry symbolication is intact.
+
+Nondeterminism allowlist (every non-matching entry, with cause):
+
+1. `Runner.xcarchive/Info.plist` — `CreationDate` key only: `xcodebuild
+   archive` stamps wall-clock time. Differs on every archive, mono or split.
+2. LC_UUID in every linked Mach-O and its debug companions — the linker
+   derives each binary's UUID from its full input closure (including build
+   paths), so two archives never share UUIDs. Covers:
+   `Products/Applications/Runner.app/Runner`, its
+   `dSYMs/Runner.app.dSYM` DWARF, and
+   `Relocations/aarch64/Runner.yml` (15 differing bytes — the embedded UUID).
+3. `__LINKEDIT` symbol/string tables embedding the randomized Nix build
+   directory (`/nix/var/nix/builds/nix-<pid>-<rand>`): affects
+   `shared_preferences_foundation.framework`'s binary, its dSYM, and its
+   Relocations yml (8197 differing bytes; file sizes identical).
+4. `App.framework/App`, `App.framework.dSYM` DWARF, and
+   `debug-symbols/app.ios-arm64.symbols` — `gen_snapshot` (Dart AOT) is
+   nondeterministic run-to-run, independent of the mono/split change: 108433
+   of 2558224 bytes differ, sizes identical. Proof it is gen_snapshot and not
+   the split: rebuilding the *same* dart-aot derivation fails Nix's own
+   determinism check —
+   `nix build --rebuild '<dart-aot>.drv^*'` →
+   `error: derivation '...-incremental-app-split-dart-aot.drv' may not be
+   deterministic: output '...' differs`. Byte-diffing the `--keep-failed`
+   `.check` output against the registered output shows the identical
+   profile: exactly the same three files differ (86436 of 2558224 bytes in
+   `App.framework/App`, size unchanged, fresh LC_UUID), everything else
+   byte-equal — same-derivation run-to-run noise matches the mono-vs-split
+   delta.
+
+Classes 1–3 are inherent to `xcodebuild archive` and reproduce identically
+between two *monolithic* builds; only class 4 originates in the Dart AOT
+step, and it reproduces between two runs of the *same* derivation.
+
+Runtime smoke: the design constrains output to **unsigned** device-arm64
+archives (iphoneos SDK, ad-hoc/no signing). Such an archive cannot boot in a
+simulator (wrong platform: simulator requires an `iphonesimulator`-SDK
+build, and Flutter has no release-AOT simulator mode) nor install on a
+device without signing — the same limitation the mono path has always had;
+it is not introduced by the split. The correctness evidence substituting
+for first-frame smoke is the byte-equivalence above: the split archive is
+identical to the known-good monolithic archive except for the four
+enumerated nondeterminism classes, including byte-identical plugin
+registration (`GeneratedPluginRegistrant`), plugin frameworks (modulo
+class 2/3), and `flutter_assets/` (asset render path). Android emulator
+smoke remains open pending a Linux machine (Android phase is Linux-only —
+see "Implementation phases").
 
 ### 2. Cache-keying proof (the actual feature)
 
@@ -209,13 +269,24 @@ Note: if the flake evaluates from the git tree, uncommitted fixture edits may
 be invisible — use `jj`/`git` scratch commits (this repo is jj-colocated) or
 `path:.` when evaluating.
 
+Executed (iOS, 2026-07): 8/8 assertions pass — `lib/feature.dart` edit moves
+dart-aot + assemble but not native-shell; `ios/Runner/Info.plist` edit moves
+native-shell + assemble but not dart-aot; `ios/Flutter/AppFrameworkInfo.plist`
+(the one file under `ios/` that IS a dart-aot input) moves dart-aot; restoring
+the edits returns the exact baseline drv hashes.
+
 ### 3. Timing benchmark
 
 ```bash
-time nix build .#incremental-app-mono --rebuild        # monolithic baseline
-
-# Dart-only rebuild: edit lib/main.dart (scratch commit), then:
-time nix build .#incremental-app-split                 # shell cached, AOT+assemble build
+# Prime the split (caches the native shell), then edit lib/main.dart and time
+# the SAME edit both ways — the fresh drvs force the rebuilds. (`--rebuild`
+# can't be the baseline: it diffs against the registered output, and
+# xcodebuild is nondeterministic per the class-2/4 allowlist, so it always
+# exits 1.)
+nix build .#incremental-app-split
+echo '// dart edit' >> tests/fixtures/flutter/incremental-app/lib/main.dart
+time nix build .#incremental-app-mono   # monolithic baseline: full rebuild
+time nix build .#incremental-app-split  # shell cached, AOT+assemble build
 ```
 
 Record numbers in `benchmarks/BENCHMARKS.md` via `fnx bench` (add

@@ -17,7 +17,8 @@ use crate::nixutil;
 /// the run holding cache directories open.
 #[derive(Args)]
 pub struct BenchArgs {
-    /// Benchmark target: lock | gradle-build | flutter-build | ios-lock | ios-build | all
+    /// Benchmark target: lock | gradle-build | flutter-build | ios-lock |
+    /// ios-build | ios-incremental | android-incremental | all
     #[arg(long, default_value = "all")]
     pub target: String,
 }
@@ -62,9 +63,26 @@ pub fn run(args: BenchArgs) -> anyhow::Result<()> {
             ),
         }
     }
+    // The incremental fixture builds resolve .#incremental-app-{mono,split} to
+    // the host platform's app (ios on macOS, android on Linux), so both
+    // targets share one implementation behind opposite OS gates.
+    if want("ios-incremental") {
+        if cfg!(target_os = "macos") {
+            results.push(bench_incremental(&repo_root, "ios-incremental")?);
+        } else if args.target != "all" {
+            bail!("ios-incremental needs macOS (Xcode)");
+        }
+    }
+    if want("android-incremental") {
+        if cfg!(target_os = "linux") {
+            results.push(bench_incremental(&repo_root, "android-incremental")?);
+        } else if args.target != "all" {
+            bail!("android-incremental needs Linux (the flake's Android SDK gate)");
+        }
+    }
     if results.is_empty() && args.target != "all" {
         bail!(
-            "unknown bench target '{}' (expected lock | gradle-build | flutter-build | ios-lock | ios-build | all)",
+            "unknown bench target '{}' (expected lock | gradle-build | flutter-build | ios-lock | ios-build | ios-incremental | android-incremental | all)",
             args.target
         );
     }
@@ -488,6 +506,67 @@ fn bench_ios_build(repo_root: &Path) -> anyhow::Result<Option<BenchResult>> {
         cold,
         warm,
     }))
+}
+
+/// Incremental Dart split benchmark (docs/incremental-dart-builds.md §3):
+/// prime the split untimed (caches the native shell), apply a Dart-only edit
+/// to the fixture, then time the same edit both ways — cold = `nix build
+/// .#incremental-app-mono` (fresh drv, the monolithic full rebuild every Dart
+/// edit used to cost); warm = `nix build .#incremental-app-split` (fresh
+/// dart-aot + assemble drvs, native shell cache-hit). The edit forces the
+/// rebuild; `--rebuild` can't — it diffs against the registered output and
+/// xcodebuild is nondeterministic (LC_UUID et al.), so it always exits 1.
+/// Target: warm ≤ 50% of cold — worse means the shell is leaking inputs.
+/// The fixture edit is in the repo's own tree (flakes include dirty tracked
+/// files); a guard restores lib/main.dart even on failure.
+fn bench_incremental(repo_root: &Path, name: &'static str) -> anyhow::Result<BenchResult> {
+    let fixture_main = repo_root.join("tests/fixtures/flutter/incremental-app/lib/main.dart");
+    if !fixture_main.exists() {
+        bail!(
+            "missing {} — the incremental fixture is not checked out",
+            fixture_main.display()
+        );
+    }
+    // Prime the split's native-shell + dart-aot caches, untimed.
+    nix_build_path(repo_root, ".#incremental-app-split")?;
+
+    let original = std::fs::read_to_string(&fixture_main).context("reading fixture main.dart")?;
+    let _restore = FileRestoreGuard {
+        path: fixture_main.clone(),
+        contents: original.clone(),
+    };
+    std::fs::write(
+        &fixture_main,
+        format!("{original}\n// fnx bench: dart-only edit\n"),
+    )
+    .context("writing Dart-only fixture edit")?;
+
+    let mut mono = Command::new("nix");
+    mono.args(["build", ".#incremental-app-mono", "--no-link"])
+        .current_dir(repo_root);
+    let cold = run_timed(mono, &format!("{name} mono full rebuild (cold)"))?;
+
+    let mut split = Command::new("nix");
+    split
+        .args(["build", ".#incremental-app-split", "--out-link"])
+        .arg(repo_root.join("target/fnx-bench-gcroots/incremental-app-split"))
+        .current_dir(repo_root);
+    let warm = run_timed(split, &format!("{name} split Dart-only rebuild (warm)"))?;
+
+    Ok(BenchResult { name, cold, warm })
+}
+
+/// Restores a benchmark-edited file to its original contents on drop,
+/// including on failure.
+struct FileRestoreGuard {
+    path: PathBuf,
+    contents: String,
+}
+
+impl Drop for FileRestoreGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::write(&self.path, &self.contents);
+    }
 }
 
 /// Deletes the sign-setup temp keychain (which also drops its search-list

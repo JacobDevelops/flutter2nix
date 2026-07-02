@@ -1,0 +1,7 @@
+local.properties
+.gradle/
+/build/
+gradlew.bat
+key.properties
+**/*.keystore
+**/*.jks

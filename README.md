@@ -155,6 +155,45 @@ dispatches to the Android and/or iOS builders based on host platform and the
 requested `platforms`. See [docs/ios-testing.md](docs/ios-testing.md) for the
 iOS build and signing guide.
 
+### Incremental Dart-only rebuilds (`incrementalDart`)
+
+By default a source edit rebuilds the whole app derivation — Gradle/Xcode and
+all. Pass `incrementalDart = true` to any of the builders to split the build
+into three derivations so a Dart-only edit rebuilds only the cheap Dart AOT
+slice:
+
+- **native-shell** — the full platform build (Gradle/Xcode) with a stub Dart
+  artifact. Keyed on everything *except* `lib/`, `test/`, and `assets/`
+  (override the exclusion list with `nativeShellExcludes`), so it stays cached
+  across Dart edits.
+- **dart-aot** — `flutter assemble` producing the real AOT snapshot + assets.
+  Keyed on `lib/`, `assets/`, the pub lockfiles, `dartDefines`, the
+  obfuscation flags, and `ios/Flutter/AppFrameworkInfo.plist` (flutter copies
+  it into `App.framework/Info.plist`) — the only derivation a Dart edit
+  invalidates.
+- **assemble** — copies the shell output and swaps the stub for the real
+  artifact. Trivial.
+
+```nix
+flutter2nix.lib.buildFlutterApp {
+  # ... same args as above ...
+  incrementalDart = true;
+}
+```
+
+> **⚠️ Unsigned output only.** The assemble step edits the bundle *after* the
+> platform build, so any signature produced inside the build would be
+> invalidated. **Do not enable `incrementalDart` if your Gradle build signs the
+> AAB or you pass `signing` to `buildFlutterIOSApp`** — the iOS builder throws
+> on that combination, and Gradle-side signing config is on you. Sign the
+> emitted artifact as a separate step instead.
+
+The output is byte-equivalent to the monolithic build (same inputs, same
+`flutter` tooling — see `docs/incremental-dart-builds.md` for the equivalence
+test). Monolithic remains the default. For CI caching implications see
+[docs/ci-cache-strategy.md](docs/ci-cache-strategy.md) — the native-shell
+derivation is a new expensive tier your cache must retain.
+
 ### Fast cold CI: ship fewer bytes first
 
 On a fresh runner the build is **restore-bound**, and the restore is
