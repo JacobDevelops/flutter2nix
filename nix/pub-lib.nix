@@ -80,10 +80,17 @@
         else "3.0";
     in
     # Append the root package itself; rootUri "../" resolves from .dart_tool/.
+    #
+    # `src + "/pubspec.yaml"` (a single-file import), NOT `${src}/pubspec.yaml`:
+    # the latter makes the ENTIRE app tree an input of this derivation, so every
+    # Dart edit re-derived package-config — and, through it, the offlineDeps
+    # linkFarm consumers key their caches on — breaking the "keyed only on the
+    # lockfiles" contract. The lock-json IFD above is already single-file-keyed
+    # via the pubspecLockFile default; this was the one remaining whole-src leak.
     pkgs.runCommand "${name}-package-config.json" {
       nativeBuildInputs = [ pkgs.jq pkgs.yq ];
     } ''
-      packageName="$(yq --raw-output .name '${src}/pubspec.yaml')"
+      packageName="$(yq --raw-output .name '${src + "/pubspec.yaml"}')"
       jq --arg name "$packageName" --arg languageVersion "${languageVersion}" \
         '.packages |= . + [{ name: $name, rootUri: "../", packageUri: "lib/", languageVersion: (if $languageVersion == "null" then null else $languageVersion end) }]' \
         '${depPackageConfig}' > "$out"
