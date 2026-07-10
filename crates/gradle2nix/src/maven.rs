@@ -80,7 +80,10 @@ async fn http_get(
 /// whole-request timeout, so it also covers the subsequent body read
 /// (`.bytes()`) — which the small `MAX_HTTP_TIMEOUT_SECS` backstop would
 /// otherwise abort on a 100–180 MB engine jar.
-async fn http_get_artifact(client: &reqwest::Client, url: &str) -> anyhow::Result<reqwest::Response> {
+async fn http_get_artifact(
+    client: &reqwest::Client,
+    url: &str,
+) -> anyhow::Result<reqwest::Response> {
     let budget = Duration::from_secs(MAX_ARTIFACT_DOWNLOAD_SECS);
     let mut last: Option<anyhow::Error> = None;
     for attempt in 0..2 {
