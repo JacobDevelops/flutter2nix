@@ -181,6 +181,25 @@ flutter2nix.lib.buildFlutterApp {
 }
 ```
 
+> **⚠️ `flutterBuildArgs` is ignored in split mode.** It only feeds the
+> monolithic `flutter build appbundle` invocation; the split path drives Gradle
+> and `flutter assemble` directly. Use the dedicated typed args instead so they
+> reach both paths:
+>
+> - **`flavor`** (Android) — the AGP product flavor (e.g. `"stag"`). Selects the
+>   Gradle variant and bundle/compile task names (`bundleStagRelease`,
+>   `compileFlutterBuildStagRelease`) for the split, and appends `--flavor` for
+>   the monolithic build. Do **not** also pass `--flavor` in `flutterBuildArgs`.
+>   iOS flavors are selected via `scheme` / `configuration` as before.
+> - **`extraGenSnapshotOptions`** (both platforms) — a list of extra
+>   gen_snapshot options for the Dart AOT compile, e.g.
+>   `[ "--save-obfuscation-map=build/debug-symbols/obfuscation.map.json" ]`. The
+>   obfuscation map lands alongside the `.symbols` in `result/debug-symbols`.
+>
+> A flavored build can emit more than one top-level `*.aab`; the split's swap
+> patches every one (and the finalized-output filter drops AGP's large
+> `intermediary-bundle.aab`).
+
 > **⚠️ Unsigned output only.** The assemble step edits the bundle *after* the
 > platform build, so any signature produced inside the build would be
 > invalidated. **Do not enable `incrementalDart` if your Gradle build signs the

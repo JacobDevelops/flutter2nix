@@ -94,6 +94,52 @@ enable the split.
   concerns — alignment applies to APKs generated later by bundletool, not to
   the AAB.
 
+### Flavors, extra gen-snapshot options, and the `flutterBuildArgs` caveat
+
+The split path does NOT call `flutter build appbundle` — the native shell
+drives Gradle directly (`:app:bundle<Variant> -x :app:compileFlutterBuild<Variant>`)
+and `dart-aot` calls `flutter assemble` directly. So `flutterBuildArgs`, which
+only feeds the monolithic `flutter build` invocation, is silently ignored in
+split mode. Anything that must reach both paths is a dedicated typed arg:
+
+- **`flavor`** (Android, default `null`) — the AGP product flavor. The Flutter
+  Gradle plugin keys its FlutterTask intermediate dir on the camelCase variant
+  name (`build/app/intermediates/flutter/<variant>`, e.g. `stagRelease`), and
+  the bundle/compile task suffixes are that name capitalized (`bundleStagRelease`,
+  `compileFlutterBuildStagRelease`); flavorless stays `release` / `bundleRelease`.
+  The stub `libapp.so` is written into the variant-named intermediates dir so the
+  `-x compileFlutterBuild<Variant>` build picks it up. The monolithic path
+  appends `--flavor <flavor>`. Consumers must NOT also pass `--flavor` in
+  `flutterBuildArgs` (it would double up). iOS flavors are unchanged — select
+  them via `scheme` / `configuration`; the Dart AOT snapshot is flavor-independent.
+  Limitation: `dart-aot` runs `flutter assemble` without a flavor, so
+  flavor-conditional assets (pubspec `assets:` entries gated on `flavors:`) are
+  NOT filtered per flavor in split mode — the AOT tier bundles the unfiltered
+  asset set. Apps that don't use flavor-conditional assets (e.g. jfit) are
+  unaffected; if you rely on that Flutter feature, use the monolithic path.
+- **`extraGenSnapshotOptions`** (both platforms, default `[]`) — a list of extra
+  gen_snapshot options (e.g. `--save-obfuscation-map=<path>`). Comma-joined into
+  `flutter assemble -dExtraGenSnapshotOptions=...` (split, both platforms) and,
+  for monolithic, `flutter build --extra-gen-snapshot-options=...` (Android) or
+  `EXTRA_GEN_SNAPSHOT_OPTIONS` in `Generated.xcconfig` (iOS, where
+  `xcode_backend` forwards it to assemble). It is a Dart-tier knob: it keys
+  `dart-aot` but not the native shell. When the option writes into
+  `splitDebugInfo` (e.g. `--save-obfuscation-map=build/debug-symbols/...`) the
+  map is surfaced by the existing `debug-symbols` copy (guarded by `obfuscate`),
+  so keep `obfuscate = true` when you want the map in `result/debug-symbols`.
+
+### Multiple AABs (flavored builds)
+
+A flavored Gradle build drops more than one top-level `*.aab`: the finalized
+`app-<flavor>-release.aab` (~tens of MB) plus AGP's large unshrunk
+`intermediary-bundle.aab` (~hundreds of MB) whose intermediates path also
+matches `*release*`. The monolithic `installPhase` filters out
+`intermediary-bundle.aab` by name so only the deliverable reaches `$out`
+(this also de-clutters plain monolithic output, where CI greps `result/` for
+`*.aab`). Defensively, the split's `assemble` still loops the zip surgery over
+*every* top-level `*.aab` — any bundle left carrying the stub `libapp.so` is a
+broken artifact.
+
 ### Keying rules (the point of the exercise)
 
 - The shell derivation's `src` must be a fileset EXCLUDING `lib/`, `test/`,

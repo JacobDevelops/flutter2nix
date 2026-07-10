@@ -588,10 +588,20 @@ rec {
       gradlePackage ? defaultGradlePackage pkgs src,
       androidSdk,
       flutterBuildArgs ? [ ],
+      # AGP product flavor to build (e.g. "stag"). null builds the flavorless
+      # release variant. Consumers passing this must NOT also pass --flavor in
+      # flutterBuildArgs — it is appended automatically for the monolithic path,
+      # and it selects the Gradle variant/bundle task names for the split path.
+      flavor ? null,
       consolidateMavenRepo ? false,
       engineModes ? null,
       # "KEY=VALUE" --dart-define strings (mirrors buildFlutterIOSApp).
       dartDefines ? [ ],
+      # Extra gen_snapshot options forwarded to the Dart AOT compile (e.g.
+      # "--save-obfuscation-map=build/debug-symbols/obfuscation.map.json"). List
+      # of strings; comma-joined for `flutter assemble -dExtraGenSnapshotOptions`
+      # (split) and `flutter build --extra-gen-snapshot-options` (monolithic).
+      extraGenSnapshotOptions ? [ ],
       # Dart obfuscation + split-debug-info; symbol files surface as
       # $out/debug-symbols (see installPhase).
       obfuscate ? false,
@@ -638,6 +648,17 @@ rec {
       };
       buildSrc = if _buildSrc != null then _buildSrc else src;
 
+      # AGP variant naming for the flavor. The Flutter Gradle plugin keys its
+      # FlutterTask intermediate dir on the camelCase variant name (release, or
+      # <flavor>Release), and the bundle/compile task suffixes are that name
+      # capitalized (Release / <Flavor>Release). Confirmed against the Flutter
+      # SDK gradle plugin source.
+      capitalize = s: lib.toUpper (lib.substring 0 1 s) + lib.substring 1 (-1) s;
+      variant = if flavor == null then "release" else "${flavor}Release";
+      Variant = capitalize variant;
+      # Comma-joined for the -d/--extra-gen-snapshot-options forms flutter accepts.
+      extraGenSnapshotJoined = lib.concatStringsSep "," extraGenSnapshotOptions;
+
       # --- incrementalDart split machinery (docs/incremental-dart-builds.md) ---
       filteredSrc =
         excludes:
@@ -657,6 +678,7 @@ rec {
           name = "${name}-native-shell";
           incrementalDart = false;
           dartDefines = [ ];
+          extraGenSnapshotOptions = [ ];
           obfuscate = false;
           _dartStub = true;
           _buildSrc = filteredSrc nativeShellExcludes;
@@ -710,6 +732,7 @@ rec {
             -dTreeShakeIcons=true
             -dDartObfuscation=${if obfuscate then "true" else "false"}
             ${lib.optionalString obfuscate "-dSplitDebugInfo=${splitDebugInfo}"}
+            ${lib.optionalString (extraGenSnapshotOptions != [ ]) "-dExtraGenSnapshotOptions=${extraGenSnapshotJoined}"}
             -dAndroidArchs="android-arm android-arm64 android-x64"
           )
           dart_defines=(${lib.concatStringsSep " " (map lib.escapeShellArg dartDefines)})
@@ -763,8 +786,12 @@ rec {
             mkdir -p $out
             cp -R ${nativeShell}/. $out/
             chmod -R u+w $out
-            aab=$(find $out -maxdepth 1 -name '*.aab' | head -n1)
-            if [ -z "$aab" ]; then
+            # Every top-level AAB the shell emitted must get the swap: a flavored
+            # build (AGP product flavors) can drop more than one bundle at $out
+            # root, and any AAB left carrying the stub libapp.so is a broken
+            # artifact. Loop over all of them rather than patching only the first.
+            mapfile -t aabs < <(find $out -maxdepth 1 -name '*.aab')
+            if [ "''${#aabs[@]}" -eq 0 ]; then
               echo "flutter2nix incrementalDart: no .aab in the native-shell output" >&2
               exit 1
             fi
@@ -788,8 +815,10 @@ rec {
             # entries are same-name and simply overwritten. No zipalign
             # concerns — alignment applies to the APKs bundletool derives
             # later, not to the AAB itself.
-            zip -q -d "$aab" 'base/assets/flutter_assets/*' || true
-            (cd "$staging" && zip -q -X -r "$aab" base)
+            for aab in "''${aabs[@]}"; do
+              zip -q -d "$aab" 'base/assets/flutter_assets/*' || true
+              (cd "$staging" && zip -q -X -r "$aab" base)
+            done
 
             ${lib.optionalString obfuscate ''
               if [ -d "${dartAot}/debug-symbols" ]; then
@@ -947,7 +976,9 @@ rec {
                         exit 1
                       fi
                       printf 'const unsigned char kFlutter2nixStubApp = 1;\n' > "$NIX_BUILD_TOP/stub.c"
-                      flutter_intermediate=build/app/intermediates/flutter/release
+                      # The Flutter Gradle plugin reads AOT output from the
+                      # variant-named intermediates dir (release, or <flavor>Release).
+                      flutter_intermediate=build/app/intermediates/flutter/${variant}
                       for tgt in aarch64-linux-android21:arm64-v8a armv7a-linux-androideabi21:armeabi-v7a x86_64-linux-android21:x86_64; do
                         abi="''${tgt##*:}"
                         mkdir -p "$flutter_intermediate/$abi"
@@ -969,8 +1000,8 @@ rec {
                         "$version_name" "$version_code" >> android/local.properties
                       # ponytail: assumes the template module name :app; parameterize
                       # only if a consumer ever renames the module.
-                      (cd android && ./gradlew :app:bundleRelease \
-                        -x :app:compileFlutterBuildRelease \
+                      (cd android && ./gradlew :app:bundle${Variant} \
+                        -x :app:compileFlutterBuild${Variant} \
                         -Ptarget-platform=android-arm,android-arm64,android-x64)
                     ''
                   else
@@ -978,7 +1009,11 @@ rec {
                       flutter build appbundle --no-pub ${
                         lib.escapeShellArgs (
                           flutterBuildArgs
+                          ++ lib.optionals (flavor != null) [ "--flavor" flavor ]
                           ++ map (d: "--dart-define=${d}") dartDefines
+                          ++ lib.optionals (extraGenSnapshotOptions != [ ]) [
+                            "--extra-gen-snapshot-options=${extraGenSnapshotJoined}"
+                          ]
                           ++ lib.optionals obfuscate [
                             "--obfuscate"
                             "--split-debug-info=${splitDebugInfo}"
@@ -992,9 +1027,15 @@ rec {
       installPhase = ''
         runHook preInstall
         mkdir -p $out
-        # -iname *release*: flavored builds land in bundle/<flavor>Release/
+        # -ipath *release*: flavored builds land in bundle/<flavor>Release/
         # (e.g. stagRelease), not bundle/release/.
-        find . -name "*.aab" -ipath "*release*" -exec cp {} $out/ \;
+        # ! -name intermediary-bundle.aab: AGP's bundle pipeline drops a large
+        # unshrunk intermediary-bundle.aab under intermediates/<variant>/ whose
+        # path also matches *release*. It is not the deliverable AAB — copying it
+        # would leave a stub-carrying duplicate at $out root (the incrementalDart
+        # assemble step only swaps the final bundle) and confuse CI's `find
+        # result -name '*.aab'`. Keep only the finalized outputs/bundle AAB.
+        find . -name "*.aab" ! -name "intermediary-bundle.aab" -ipath "*release*" -exec cp {} $out/ \;
         find . -name "*.apk" -ipath "*release*" -exec cp {} $out/ \;
         if [ -z "$(find "$out" -name "*.aab" -o -name "*.apk" 2>/dev/null)" ]; then
           echo "ERROR: No AAB or APK found in build output." >&2

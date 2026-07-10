@@ -85,6 +85,12 @@ let
       # $out/debug-symbols (mirroring the Android gradle2nix-lib).
       obfuscate ? false,
       splitDebugInfo ? "build/debug-symbols",
+      # Extra gen_snapshot options forwarded to the Dart AOT compile (e.g.
+      # "--save-obfuscation-map=build/debug-symbols/obfuscation.map.json"). List
+      # of strings; comma-joined into Generated.xcconfig's
+      # EXTRA_GEN_SNAPSHOT_OPTIONS (monolithic, where xcode_backend forwards it to
+      # `flutter assemble`) and `flutter assemble -dExtraGenSnapshotOptions` (split).
+      extraGenSnapshotOptions ? [ ],
       incrementalDart ? false,
       nativeShellExcludes ? [
         "lib"
@@ -110,6 +116,8 @@ let
       };
       podsSandbox = iosLib.buildPodsSandbox pkgs (iosLib.readPods lockFile);
       buildSrc = if _buildSrc != null then _buildSrc else src;
+      # Comma-joined for the -d/xcconfig forms flutter accepts.
+      extraGenSnapshotJoined = lib.concatStringsSep "," extraGenSnapshotOptions;
 
       # --- incrementalDart split machinery (docs/incremental-dart-builds.md) ---
       filteredSrc =
@@ -155,6 +163,7 @@ let
           name = "${name}-native-shell";
           incrementalDart = false;
           dartDefines = [ ];
+          extraGenSnapshotOptions = [ ];
           obfuscate = false;
           _dartStub = true;
           _buildSrc = filteredSrc nativeShellExcludes;
@@ -218,6 +227,7 @@ let
             -dTreeShakeIcons=false
             -dDartObfuscation=${if obfuscate then "true" else "false"}
             ${lib.optionalString obfuscate "-dSplitDebugInfo=${splitDebugInfo}"}
+            ${lib.optionalString (extraGenSnapshotOptions != [ ]) "-dExtraGenSnapshotOptions=${extraGenSnapshotJoined}"}
           )
           dart_defines=(${lib.concatStringsSep " " (map lib.escapeShellArg dartDefines)})
           if [ "''${#dart_defines[@]}" -gt 0 ]; then
@@ -386,7 +396,7 @@ let
           printf 'FLUTTER_BUILD_DIR=build\n'
           printf 'FLUTTER_BUILD_NAME=%s\n' "$flutter_build_name"
           printf 'FLUTTER_BUILD_NUMBER=%s\n' "$flutter_build_number"
-          printf 'DART_OBFUSCATION=${if obfuscate then "true" else "false"}\n'${lib.optionalString obfuscate "\n          printf 'SPLIT_DEBUG_INFO=${splitDebugInfo}\\n'"}
+          printf 'DART_OBFUSCATION=${if obfuscate then "true" else "false"}\n'${lib.optionalString obfuscate "\n          printf 'SPLIT_DEBUG_INFO=${splitDebugInfo}\\n'"}${lib.optionalString (extraGenSnapshotOptions != [ ]) "\n          printf 'EXTRA_GEN_SNAPSHOT_OPTIONS=${extraGenSnapshotJoined}\\n'"}
           printf 'TRACK_WIDGET_CREATION=true\n'
           printf 'TREE_SHAKE_ICONS=false\n'
           printf 'PACKAGE_CONFIG=.dart_tool/package_config.json\n'
@@ -619,6 +629,14 @@ let
   #   exportOptions   — path to ExportOptions.plist (passed to buildFlutterIOSApp)
   #   dartDefines     — list of "KEY=VALUE" --dart-define strings for iOS
   #                     (passed to buildFlutterIOSApp; see there)
+  #   flavor          — Android only; AGP product flavor to build (e.g. "stag").
+  #                     Selects the Gradle variant/bundle task names and appends
+  #                     --flavor for the monolithic path. Forwarded to
+  #                     buildFlutterAndroidApp (see there); do not also pass
+  #                     --flavor in flutterBuildArgs.
+  #   extraGenSnapshotOptions — list of extra gen_snapshot options for the Dart
+  #                     AOT compile on both platforms (e.g. an obfuscation-map
+  #                     path). Forwarded to both platform builders (see there).
   #   produceArchive  — emit an unsigned iOS .xcarchive instead of a .app
   #                     (passed to buildFlutterIOSApp; see there)
   #   scheme          — Xcode scheme for iOS (default "Runner"; e.g. a flavor
@@ -715,11 +733,15 @@ let
           jdk = args.jdk or pkgs.jdk17;
           flutterBuildArgs = args.flutterBuildArgs or [ ];
           dartDefines = args.dartDefines or [ ];
+          extraGenSnapshotOptions = args.extraGenSnapshotOptions or [ ];
           obfuscate = args.obfuscate or false;
           splitDebugInfo = args.splitDebugInfo or "build/debug-symbols";
           incrementalDart = args.incrementalDart or false;
         }
         // lib.optionalAttrs (args ? nativeShellExcludes) { inherit (args) nativeShellExcludes; }
+        # Only forward a flavor when set, so the default stays the flavorless
+        # release variant (see buildFlutterAndroidApp's flavor doc).
+        // lib.optionalAttrs (args ? flavor) { inherit (args) flavor; }
         # Only forward an explicit gradlePackage: when absent,
         # buildFlutterAndroidApp autodetects from gradle-wrapper.properties.
         // lib.optionalAttrs (args ? gradlePackage) { inherit (args) gradlePackage; }
@@ -745,6 +767,7 @@ let
           configuration = args.configuration or "Release";
           obfuscate = args.obfuscate or false;
           splitDebugInfo = args.splitDebugInfo or "build/debug-symbols";
+          extraGenSnapshotOptions = args.extraGenSnapshotOptions or [ ];
           incrementalDart = args.incrementalDart or false;
         }
         // lib.optionalAttrs (args ? nativeShellExcludes) { inherit (args) nativeShellExcludes; }
