@@ -755,6 +755,40 @@
             assert pkgs.lib.assertMsg (drv.dartAot.drvPath != defined.dartAot.drvPath)
               "dartDefines must key the dart-aot derivation";
             builtins.seq drv.drvPath (pkgs.runCommand "incrementalDart-split-eval" { } "touch $out");
+          # Keying of the flavor/extraGenSnapshotOptions args (eval-only, like
+          # incrementalDart-split-eval — minimal-app has no AGP flavors, so the
+          # flavored Gradle graph is never built here; jfit is the real e2e).
+          incrementalDart-flavor-keying-eval =
+            let
+              mk =
+                extra:
+                (self.lib.buildFlutterApp (
+                  {
+                    inherit pkgs;
+                    name = "incremental-flavor-eval";
+                    src = ./tests/fixtures/flutter/minimal-app;
+                    lockFile = ./tests/fixtures/flutter/minimal-app/flutter2nix.lock;
+                    androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
+                    platforms = [ "android" ];
+                    incrementalDart = true;
+                  }
+                  // extra
+                )).android;
+              base = mk { };
+              flavored = mk { flavor = "stag"; };
+              withOpt = mk {
+                extraGenSnapshotOptions = [ "--save-obfuscation-map=build/debug-symbols/obfuscation.map.json" ];
+              };
+            in
+            assert pkgs.lib.assertMsg (base.nativeShell.drvPath != flavored.nativeShell.drvPath)
+              "flavor must key the native shell (it selects the Gradle variant/bundle task)";
+            assert pkgs.lib.assertMsg (base.nativeShell.drvPath == withOpt.nativeShell.drvPath)
+              "extraGenSnapshotOptions must not key the native shell";
+            assert pkgs.lib.assertMsg (base.dartAot.drvPath != withOpt.dartAot.drvPath)
+              "extraGenSnapshotOptions must key the dart-aot derivation";
+            builtins.seq flavored.drvPath (
+              pkgs.runCommand "incrementalDart-flavor-keying-eval" { } "touch $out"
+            );
           # incrementalDart + in-build signing is unsound (the Dart swap happens
           # after xcodebuild, breaking any signature) — must throw, not build.
           incrementalDart-signing-throws-eval =

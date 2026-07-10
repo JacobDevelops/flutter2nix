@@ -700,7 +700,19 @@ rec {
         buildInputs = [
           flutterSdk
           pkgs.git
+          # flutter_tools' startup SDK discovery runs `which adb` when
+          # ANDROID_HOME is unset (android_sdk.dart findAndroidHomeDir) and
+          # crashes the CLI if `which` is missing from PATH.
+          pkgs.which
         ];
+        # `flutter assemble`'s dart_build target (native-assets/build-hook
+        # support) unconditionally resolves the NDK C-compiler config for
+        # android targets and hard-fails without an SDK — any app depending on
+        # a package with Dart build hooks needs this. The SDK is a fixed store
+        # input, so it does not weaken the split's keying: Dart-only edits
+        # still rebuild only this cheap tier.
+        ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
+        ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
         meta.platforms = lib.platforms.linux;
         buildPhase = ''
           runHook preBuild
@@ -757,6 +769,27 @@ rec {
           for abi in armeabi-v7a arm64-v8a x86_64; do
             cp -R "$NIX_BUILD_TOP/aot/$abi" $out/
           done
+          # Match AGP's release post-processing, which the monolithic path gets
+          # for free from the Gradle build: StripDebugSymbolsTask runs
+          # `llvm-strip --strip-unneeded` on every packaged jniLib (gen_snapshot
+          # emits libapp.so unstripped — ~1.6x larger), and debugSymbolLevel
+          # SYMBOL_TABLE ships a `--strip-debug` copy as
+          # BUNDLE-METADATA/.../libapp.so.sym (swapped in by assemble). Both
+          # verified byte-size-identical to the monolithic output. Like AGP,
+          # skip when the SDK has no NDK (AGP just warns and packages
+          # unstripped in that case).
+          ndk_bin="$(find -L "$ANDROID_SDK_ROOT/ndk" -path '*/toolchains/llvm/prebuilt/*/bin' -type d 2>/dev/null | head -n1)"
+          if [ -n "$ndk_bin" ]; then
+            chmod -R u+w $out
+            for abi in armeabi-v7a arm64-v8a x86_64; do
+              if [ -e "$out/$abi/app.so" ]; then
+                "$ndk_bin/llvm-objcopy" --strip-debug "$out/$abi/app.so" "$out/$abi/app.so.sym"
+                "$ndk_bin/llvm-strip" --strip-unneeded "$out/$abi/app.so"
+              fi
+            done
+          else
+            echo "flutter2nix dart-aot: no NDK under $ANDROID_SDK_ROOT/ndk — packaging libapp.so unstripped (matches AGP without NDK)" >&2
+          fi
           cp -R "$NIX_BUILD_TOP/aot/flutter_assets" $out/
           ${lib.optionalString obfuscate ''
             if [ -n "$(find ${splitDebugInfo} -type f 2>/dev/null)" ]; then
@@ -810,6 +843,23 @@ rec {
             # -X keeps the bumped timestamps out of the archive entries anyway.
             find "$staging" -exec touch -t 198001010000 {} +
 
+            # Native-symbol metadata: when AGP's debugSymbolLevel produced
+            # BUNDLE-METADATA libapp.so.sym entries they describe the STUB
+            # libapp, so replace them with the real ones from dart-aot. Gated
+            # on the entries existing (zip -d fails when nothing matched) so an
+            # app without debugSymbolLevel stays without them — mono parity
+            # both ways.
+            symstaging="$NIX_BUILD_TOP/symstaging"
+            for abi in armeabi-v7a arm64-v8a x86_64; do
+              if [ -e "${dartAot}/$abi/app.so.sym" ]; then
+                install -D -m644 "${dartAot}/$abi/app.so.sym" \
+                  "$symstaging/BUNDLE-METADATA/com.android.tools.build.debugsymbols/$abi/libapp.so.sym"
+              fi
+            done
+            if [ -d "$symstaging" ]; then
+              find "$symstaging" -exec touch -t 198001010000 {} +
+            fi
+
             # The stub flutter_assets entry set differs from the real one:
             # delete the stale tree, then add/overwrite in place. libapp.so
             # entries are same-name and simply overwritten. No zipalign
@@ -817,7 +867,10 @@ rec {
             # later, not to the AAB itself.
             for aab in "''${aabs[@]}"; do
               zip -q -d "$aab" 'base/assets/flutter_assets/*' || true
-              (cd "$staging" && zip -q -X -r "$aab" base)
+              (cd "$staging" && zip -q -X -D -r "$aab" base)
+              if [ -d "$symstaging" ] && zip -q -d "$aab" 'BUNDLE-METADATA/com.android.tools.build.debugsymbols/*/libapp.so.sym' 2>/dev/null; then
+                (cd "$symstaging" && zip -q -X -D -r "$aab" BUNDLE-METADATA)
+              fi
             done
 
             ${lib.optionalString obfuscate ''
