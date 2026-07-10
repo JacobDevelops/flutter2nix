@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.nix_system }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nix_system: x86_64-linux
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - nix_system: aarch64-linux
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - nix_system: x86_64-darwin
+            runner: macos-15
+            target: x86_64-apple-darwin
+          - nix_system: aarch64-darwin
+            runner: macos-15
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install musl tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Cargo build
+        run: cargo build --release --workspace --target ${{ matrix.target }}
+
+      - name: Smoke test
+        run: |
+          bindir="target/${{ matrix.target }}/release"
+          "$bindir/flutter2nix" --version
+          "$bindir/gradle2nix" --version
+          "$bindir/ios2nix" --version
+          "$bindir/fnx" --version
+
+      - name: Verify static linkage
+        if: runner.os == 'Linux'
+        run: |
+          bindir="target/${{ matrix.target }}/release"
+          for tool in flutter2nix gradle2nix ios2nix fnx; do
+            info="$(file "$bindir/$tool")"
+            echo "$info"
+            if printf '%s' "$info" | grep -q "dynamically linked"; then
+              echo "::error::$tool is dynamically linked (expected a static musl binary)"
+              exit 1
+            fi
+            if ! printf '%s' "$info" | grep -qE "statically linked|static-pie"; then
+              echo "::error::$tool is not statically linked"
+              exit 1
+            fi
+          done
+
+      - name: Package tarball
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          bindir="target/${{ matrix.target }}/release"
+          stage="stage"
+          mkdir -p "$stage/bin"
+          for tool in flutter2nix gradle2nix ios2nix fnx; do
+            install -m755 "$bindir/$tool" "$stage/bin/$tool"
+          done
+          archive="flutter2nix-${tag}-${{ matrix.nix_system }}.tar.gz"
+          tar --owner=0 --group=0 --numeric-owner -czf "$archive" -C "$stage" bin
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter2nix-${{ matrix.nix_system }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    # Only tag pushes publish; a workflow_dispatch from a branch still builds
+    # (useful to smoke the matrix) but must not create a release named after
+    # the branch.
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum ./*.tar.gz > checksums.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt

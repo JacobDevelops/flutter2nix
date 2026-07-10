@@ -274,12 +274,52 @@
         e2eAll = pkgs.linkFarm "e2e-all" (
           pkgs.lib.mapAttrsToList (name: path: { inherit name path; }) (e2eTests // iosE2eTests)
         );
+
+        # Prebuilt-binary path: fetch the release tarball for ${system} and install
+        # all four tools, skipping the Rust build entirely. URL is derived from the
+        # version in nix/prebuilt.nix; hashes come from the release checksums.txt
+        # (refresh with scripts/update-prebuilt.sh). Linux binaries are static musl
+        # and darwin binaries link only system libs, so no patchelf is needed.
+        prebuiltData = import ./nix/prebuilt.nix;
+        prebuilt =
+          let
+            artifact =
+              prebuiltData.artifacts.${system}
+                or (throw "flutter2nix: no prebuilt binary for system ${system}");
+          in
+          pkgs.stdenvNoCC.mkDerivation {
+            pname = "flutter2nix-bin";
+            version = prebuiltData.version;
+            src = pkgs.fetchurl {
+              url = "https://github.com/JacobDevelops/flutter2nix/releases/download/v${prebuiltData.version}/flutter2nix-v${prebuiltData.version}-${system}.tar.gz";
+              inherit (artifact) hash;
+            };
+            # Tarball root is bin/; keep cwd at the build root so install paths resolve.
+            sourceRoot = ".";
+            dontBuild = true;
+            dontConfigure = true;
+            installPhase = ''
+              runHook preInstall
+              for tool in flutter2nix gradle2nix ios2nix fnx; do
+                install -Dm755 "bin/$tool" "$out/bin/$tool"
+              done
+              runHook postInstall
+            '';
+            meta.mainProgram = "flutter2nix";
+          };
+        prebuiltAs = mainProgram: prebuilt // { meta = prebuilt.meta // { inherit mainProgram; }; };
       in
       {
         packages = {
           inherit fnx tapi-shim-jar gradle2nix;
           flutter2nix = flutter2nix-cli;
           bench-init-script = benchGradle.initScript;
+          # Prebuilt release binaries (no Rust compile). All four tools live in one
+          # derivation; the -bin aliases just differ in meta.mainProgram for `nix run`.
+          flutter2nix-bin = prebuilt;
+          gradle2nix-bin = prebuiltAs "gradle2nix";
+          ios2nix-bin = prebuiltAs "ios2nix";
+          fnx-bin = prebuiltAs "fnx";
           # Whole e2e suite — `nix build .#e2e` (or `fnx check`) runs every e2e test.
           e2e = e2eAll;
           default = self.packages.${system}.flutter2nix;
@@ -507,9 +547,10 @@
               };
               gradle = self.lib.buildGradleProject { inherit pkgs lockFile; };
             in
-            assert pkgs.lib.assertMsg (
-              drv ? mavenRepo && drv ? packageConfig && drv ? offlineDeps
-            ) "buildFlutterAndroidApp must passthru mavenRepo, packageConfig, and offlineDeps";
+            assert pkgs.lib.assertMsg
+              (
+                drv ? mavenRepo && drv ? packageConfig && drv ? offlineDeps
+              ) "buildFlutterAndroidApp must passthru mavenRepo, packageConfig, and offlineDeps";
             assert pkgs.lib.assertMsg (drv.mavenRepo.outPath == gradle.mavenRepo.outPath)
               "passthru mavenRepo must be the exact offline Maven repo the build consumes (byte-identical store path)";
             pkgs.runCommand "buildFlutterAndroidApp-exposes-offline-deps" { } "touch $out";

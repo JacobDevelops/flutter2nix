@@ -24,6 +24,7 @@ pub(crate) fn failure_detail(output: &std::process::Output) -> String {
 #[derive(Parser)]
 #[command(
     name = "ios2nix",
+    version,
     about = "iOS/Xcode orchestration for reproducible Nix builds"
 )]
 pub struct Args {

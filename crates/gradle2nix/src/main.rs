@@ -5,6 +5,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     name = "gradle2nix",
+    version,
     about = "Gradle/Maven dependency materialiser for Nix"
 )]
 struct Args {

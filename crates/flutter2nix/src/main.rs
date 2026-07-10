@@ -5,6 +5,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     name = "flutter2nix",
+    version,
     about = "Flutter integration layer for reproducible Nix builds"
 )]
 struct Args {

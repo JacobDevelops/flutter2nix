@@ -6,6 +6,7 @@ mod nixutil;
 #[derive(Parser)]
 #[command(
     name = "fnx",
+    version,
     about = "flutter2nix developer CLI",
     long_about = "Run checks, builds, tests, and lockfile operations for the flutter2nix repo."
 )]
