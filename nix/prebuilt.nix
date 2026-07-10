@@ -6,9 +6,9 @@
 {
   version = "0.2.0";
   artifacts = {
-    x86_64-linux = { hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; };
-    aarch64-linux = { hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; };
-    x86_64-darwin = { hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; };
-    aarch64-darwin = { hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; };
+    x86_64-linux = { hash = "sha256-ytiLADTvZzhpagvYq1aRA3+gcEv+Y3DkPCcWsI/RvmA="; };
+    aarch64-linux = { hash = "sha256-/WaQ+rZ0SKXfMm15b/rVm/C+eMI635CaRBXGK2EswMM="; };
+    x86_64-darwin = { hash = "sha256-rNezRJO6ZSR5peer/8TCV79E2ru9+ZCj5q6E3RklkIo="; };
+    aarch64-darwin = { hash = "sha256-dMTWk7DYy6x9dA47nnYBeJ617liKmKpEOFbkzGBPqus="; };
   };
 }
