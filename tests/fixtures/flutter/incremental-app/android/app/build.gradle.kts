@@ -39,6 +39,13 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    lint {
+        // lintVitalRelease resolves com.android.tools.lint:lint-gradle at task
+        // execution time via a detached configuration — unavailable offline and
+        // out of scope for the offline-build E2E (same as minimal-app).
+        checkReleaseBuilds = false
+    }
 }
 
 flutter {

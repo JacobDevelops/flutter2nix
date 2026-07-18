@@ -656,8 +656,42 @@ rec {
       capitalize = s: lib.toUpper (lib.substring 0 1 s) + lib.substring 1 (-1) s;
       variant = if flavor == null then "release" else "${flavor}Release";
       Variant = capitalize variant;
+      # flutter_tools never passes --save-obfuscation-map on its own (verified
+      # against the 3.41/3.44 AOTSnapshotter), so an obfuscated build emits the
+      # per-arch .symbols but NO obfuscation map unless gen_snapshot is asked
+      # explicitly. obfuscate = true therefore always requests the map into
+      # ${splitDebugInfo}, where the .symbols surfacing below picks it up.
+      # lib.unique: consumers that already pass the same flag don't get it twice.
+      genSnapshotOptions = lib.unique (
+        extraGenSnapshotOptions
+        ++ lib.optionals obfuscate [ "--save-obfuscation-map=${splitDebugInfo}/obfuscation.map.json" ]
+      );
       # Comma-joined for the -d/--extra-gen-snapshot-options forms flutter accepts.
-      extraGenSnapshotJoined = lib.concatStringsSep "," extraGenSnapshotOptions;
+      extraGenSnapshotJoined = lib.concatStringsSep "," genSnapshotOptions;
+
+      # Hard assertion, run after every surfacing site when obfuscate = true:
+      # missing Dart symbols must FAIL the build, not warn — a release once
+      # shipped obfuscated with an empty $out/debug-symbols and Sentry
+      # symbolication silently broke. The map is also parsed: gen_snapshot
+      # writes it once per ABI to the same path, so a corrupt/partial file
+      # should die here rather than poison the consumer's upload.
+      assertDebugSymbols = dir: ''
+        if [ -z "$(find "${dir}" -name '*.symbols' -type f 2>/dev/null | head -n1)" ]; then
+          echo "ERROR: obfuscate = true but no Dart *.symbols files in ${dir}." >&2
+          echo "  flutter assemble/gen_snapshot did not write ${splitDebugInfo} where the" >&2
+          echo "  build expected it — obfuscated crash traces would be unsymbolicatable." >&2
+          exit 1
+        fi
+        if [ ! -s "${dir}/obfuscation.map.json" ]; then
+          echo "ERROR: obfuscate = true but ${dir}/obfuscation.map.json is missing/empty." >&2
+          exit 1
+        fi
+        ${pkgs.python3}/bin/python3 -c 'import json,sys; json.load(open(sys.argv[1]))' \
+          "${dir}/obfuscation.map.json" || {
+          echo "ERROR: ${dir}/obfuscation.map.json is not valid JSON (racy gen_snapshot write?)." >&2
+          exit 1
+        }
+      '';
 
       # --- incrementalDart split machinery (docs/incremental-dart-builds.md) ---
       filteredSrc =
@@ -744,7 +778,7 @@ rec {
             -dTreeShakeIcons=true
             -dDartObfuscation=${if obfuscate then "true" else "false"}
             ${lib.optionalString obfuscate "-dSplitDebugInfo=${splitDebugInfo}"}
-            ${lib.optionalString (extraGenSnapshotOptions != [ ]) "-dExtraGenSnapshotOptions=${extraGenSnapshotJoined}"}
+            ${lib.optionalString (genSnapshotOptions != [ ]) "-dExtraGenSnapshotOptions=${extraGenSnapshotJoined}"}
             -dAndroidArchs="android-arm android-arm64 android-x64"
           )
           dart_defines=(${lib.concatStringsSep " " (map lib.escapeShellArg dartDefines)})
@@ -796,6 +830,7 @@ rec {
               mkdir -p $out/debug-symbols
               cp -R ${splitDebugInfo}/. $out/debug-symbols/
             fi
+            ${assertDebugSymbols "$out/debug-symbols"}
           ''}
           runHook postInstall
         '';
@@ -879,6 +914,7 @@ rec {
                 mkdir -p "$out/debug-symbols"
                 cp -R "${dartAot}/debug-symbols/." "$out/debug-symbols/"
               fi
+              ${assertDebugSymbols "$out/debug-symbols"}
             ''}
           '';
 
@@ -1051,9 +1087,18 @@ rec {
                       { [ -n "$version_code" ] && [ "$version_code" != "$version_line" ]; } || version_code=1
                       printf 'flutter.versionName=%s\nflutter.versionCode=%s\n' \
                         "$version_name" "$version_code" >> android/local.properties
+                      # --project-cache-dir + kotlin.project.persistent.dir mirror the
+                      # nixpkgs flutter_tools patch (gradle_utils.dart _requiredArguments):
+                      # without them the composite build tries to create .gradle/ inside
+                      # the read-only store SDK's flutter_tools/gradle and dies — with a
+                      # ServiceCreationException that also breaks Gradle's own error
+                      # reporting, so the failure surfaced as a silent exit 1. Harmless
+                      # for raw-tarball SDKs (they just relocate the caches).
                       # ponytail: assumes the template module name :app; parameterize
                       # only if a consumer ever renames the module.
                       (cd android && ./gradlew :app:bundle${Variant} \
+                        --project-cache-dir="$NIX_BUILD_TOP/gradle-project-cache" \
+                        -Pkotlin.project.persistent.dir="$NIX_BUILD_TOP/kotlin-persistent" \
                         -x :app:compileFlutterBuild${Variant} \
                         -Ptarget-platform=android-arm,android-arm64,android-x64)
                     ''
@@ -1064,7 +1109,7 @@ rec {
                           flutterBuildArgs
                           ++ lib.optionals (flavor != null) [ "--flavor" flavor ]
                           ++ map (d: "--dart-define=${d}") dartDefines
-                          ++ lib.optionals (extraGenSnapshotOptions != [ ]) [
+                          ++ lib.optionals (genSnapshotOptions != [ ]) [
                             "--extra-gen-snapshot-options=${extraGenSnapshotJoined}"
                           ]
                           ++ lib.optionals obfuscate [
@@ -1122,6 +1167,7 @@ rec {
           mkdir -p $out/debug-symbols
           cp -R ${splitDebugInfo}/. $out/debug-symbols/
         fi
+        ${lib.optionalString obfuscate (assertDebugSymbols "$out/debug-symbols")}
         runHook postInstall
       '';
       };

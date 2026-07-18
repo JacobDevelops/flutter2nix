@@ -116,8 +116,38 @@ let
       };
       podsSandbox = iosLib.buildPodsSandbox pkgs (iosLib.readPods lockFile);
       buildSrc = if _buildSrc != null then _buildSrc else src;
+      # flutter_tools never passes --save-obfuscation-map on its own (verified
+      # against the 3.41/3.44 AOTSnapshotter), so obfuscate = true always
+      # requests the map into ${splitDebugInfo} alongside the .symbols files.
+      # lib.unique: consumers that already pass the same flag don't get it twice.
+      genSnapshotOptions = lib.unique (
+        extraGenSnapshotOptions
+        ++ lib.optionals obfuscate [ "--save-obfuscation-map=${splitDebugInfo}/obfuscation.map.json" ]
+      );
       # Comma-joined for the -d/xcconfig forms flutter accepts.
-      extraGenSnapshotJoined = lib.concatStringsSep "," extraGenSnapshotOptions;
+      extraGenSnapshotJoined = lib.concatStringsSep "," genSnapshotOptions;
+
+      # Hard assertion, run after every surfacing site when obfuscate = true:
+      # missing Dart symbols must FAIL the build, not warn (mirrors
+      # gradle2nix-lib — a release once shipped with an empty debug-symbols and
+      # Sentry symbolication silently broke).
+      assertDebugSymbols = dir: ''
+        if [ -z "$(find "${dir}" -name '*.symbols' -type f 2>/dev/null | head -n1)" ]; then
+          echo "ERROR: obfuscate = true but no Dart *.symbols files in ${dir}." >&2
+          echo "  flutter assemble/gen_snapshot did not write ${splitDebugInfo} where the" >&2
+          echo "  build expected it — obfuscated crash traces would be unsymbolicatable." >&2
+          exit 1
+        fi
+        if [ ! -s "${dir}/obfuscation.map.json" ]; then
+          echo "ERROR: obfuscate = true but ${dir}/obfuscation.map.json is missing/empty." >&2
+          exit 1
+        fi
+        ${pkgs.python3}/bin/python3 -c 'import json,sys; json.load(open(sys.argv[1]))' \
+          "${dir}/obfuscation.map.json" || {
+          echo "ERROR: ${dir}/obfuscation.map.json is not valid JSON (racy gen_snapshot write?)." >&2
+          exit 1
+        }
+      '';
 
       # --- incrementalDart split machinery (docs/incremental-dart-builds.md) ---
       filteredSrc =
@@ -227,7 +257,7 @@ let
             -dTreeShakeIcons=false
             -dDartObfuscation=${if obfuscate then "true" else "false"}
             ${lib.optionalString obfuscate "-dSplitDebugInfo=${splitDebugInfo}"}
-            ${lib.optionalString (extraGenSnapshotOptions != [ ]) "-dExtraGenSnapshotOptions=${extraGenSnapshotJoined}"}
+            ${lib.optionalString (genSnapshotOptions != [ ]) "-dExtraGenSnapshotOptions=${extraGenSnapshotJoined}"}
           )
           dart_defines=(${lib.concatStringsSep " " (map lib.escapeShellArg dartDefines)})
           if [ "''${#dart_defines[@]}" -gt 0 ]; then
@@ -265,6 +295,7 @@ let
               mkdir -p $out/debug-symbols
               cp -R ${splitDebugInfo}/. $out/debug-symbols/
             fi
+            ${assertDebugSymbols "$out/debug-symbols"}
           ''}
           runHook postInstall
         '';
@@ -317,6 +348,7 @@ let
                 mkdir -p "$out/debug-symbols"
                 cp -R "${dartAot}/debug-symbols/." "$out/debug-symbols/"
               fi
+              ${assertDebugSymbols "$out/debug-symbols"}
             ''}
           '';
 
@@ -396,7 +428,7 @@ let
           printf 'FLUTTER_BUILD_DIR=build\n'
           printf 'FLUTTER_BUILD_NAME=%s\n' "$flutter_build_name"
           printf 'FLUTTER_BUILD_NUMBER=%s\n' "$flutter_build_number"
-          printf 'DART_OBFUSCATION=${if obfuscate then "true" else "false"}\n'${lib.optionalString obfuscate "\n          printf 'SPLIT_DEBUG_INFO=${splitDebugInfo}\\n'"}${lib.optionalString (extraGenSnapshotOptions != [ ]) "\n          printf 'EXTRA_GEN_SNAPSHOT_OPTIONS=${extraGenSnapshotJoined}\\n'"}
+          printf 'DART_OBFUSCATION=${if obfuscate then "true" else "false"}\n'${lib.optionalString obfuscate "\n          printf 'SPLIT_DEBUG_INFO=${splitDebugInfo}\\n'"}${lib.optionalString (genSnapshotOptions != [ ]) "\n          printf 'EXTRA_GEN_SNAPSHOT_OPTIONS=${extraGenSnapshotJoined}\\n'"}
           printf 'TRACK_WIDGET_CREATION=true\n'
           printf 'TREE_SHAKE_ICONS=false\n'
           printf 'PACKAGE_CONFIG=.dart_tool/package_config.json\n'
@@ -598,6 +630,7 @@ let
             mkdir -p $out/debug-symbols
             cp -R ${splitDebugInfo}/. $out/debug-symbols/
           fi
+          ${assertDebugSymbols "$out/debug-symbols"}
         ''}
         runHook postInstall
       '';

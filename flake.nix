@@ -151,7 +151,12 @@
         };
         androidSdk =
           (pkgs.androidenv.composeAndroidPackages {
-            buildToolsVersions = [ "34.0.0" ];
+            buildToolsVersions = [
+              "34.0.0"
+              # AGP's default Build Tools for the incremental-app fixture's R8
+              # minify step; without it :app:minifyReleaseWithR8 fails to configure.
+              "35.0.0"
+            ];
             platformVersions = [
               "34"
               "36"
@@ -758,22 +763,30 @@
           # Keying of the flavor/extraGenSnapshotOptions args (eval-only, like
           # incrementalDart-split-eval — minimal-app has no AGP flavors, so the
           # flavored Gradle graph is never built here; jfit is the real e2e).
+          # Linux-only: the android drvs carry meta.platforms = linux, and
+          # nixpkgs' meta gate refuses even .drvPath evaluation on darwin, so
+          # on darwin this check is a no-op stub instead of an eval failure.
           incrementalDart-flavor-keying-eval =
+            if !pkgs.stdenv.isLinux then
+              pkgs.runCommand "incrementalDart-flavor-keying-eval" { } "touch $out"
+            else
             let
+              # buildFlutterAndroidApp directly (not the buildFlutterApp
+              # dispatcher): the dispatcher throws for android on darwin before
+              # the meta gate is even reached.
               mk =
                 extra:
-                (self.lib.buildFlutterApp (
+                self.lib.buildFlutterAndroidApp (
                   {
                     inherit pkgs;
                     name = "incremental-flavor-eval";
                     src = ./tests/fixtures/flutter/minimal-app;
                     lockFile = ./tests/fixtures/flutter/minimal-app/flutter2nix.lock;
                     androidSdk = (pkgs.androidenv.composeAndroidPackages { }).androidsdk;
-                    platforms = [ "android" ];
                     incrementalDart = true;
                   }
                   // extra
-                )).android;
+                );
               base = mk { };
               flavored = mk { flavor = "stag"; };
               withOpt = mk {
