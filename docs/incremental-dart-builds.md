@@ -123,10 +123,17 @@ split mode. Anything that must reach both paths is a dedicated typed arg:
   for monolithic, `flutter build --extra-gen-snapshot-options=...` (Android) or
   `EXTRA_GEN_SNAPSHOT_OPTIONS` in `Generated.xcconfig` (iOS, where
   `xcode_backend` forwards it to assemble). It is a Dart-tier knob: it keys
-  `dart-aot` but not the native shell. When the option writes into
-  `splitDebugInfo` (e.g. `--save-obfuscation-map=build/debug-symbols/...`) the
-  map is surfaced by the existing `debug-symbols` copy (guarded by `obfuscate`),
-  so keep `obfuscate = true` when you want the map in `result/debug-symbols`.
+  `dart-aot` but not the native shell. Note `obfuscate = true` already requests
+  `--save-obfuscation-map=<splitDebugInfo>/obfuscation.map.json` on its own
+  (flutter_tools never emits the map unasked), so this knob is only needed for
+  *other* gen_snapshot options; passing the same map flag again is deduped.
+- **Debug-symbols guard** — when `obfuscate = true`, every build path (monolithic
+  and split, both platforms) hard-fails if `$out/debug-symbols` ends up without
+  `*.symbols` files or with a missing/corrupt `obfuscation.map.json`. Absent
+  symbols used to be a silent no-op, which shipped an unsymbolicatable release.
+  Building `.#incremental-app-mono` / `.#incremental-app-split` (Linux for
+  Android, darwin for iOS) exercises the guard end-to-end and is the CI-invocable
+  regression check.
 
 ### Multiple AABs (flavored builds)
 
