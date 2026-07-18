@@ -686,9 +686,9 @@ rec {
           echo "ERROR: obfuscate = true but ${dir}/obfuscation.map.json is missing/empty." >&2
           exit 1
         fi
-        ${pkgs.python3}/bin/python3 -c 'import json,sys; json.load(open(sys.argv[1]))' \
+        ${pkgs.python3}/bin/python3 -c 'import json,sys; sys.exit(0 if len(json.load(open(sys.argv[1]))) else 1)' \
           "${dir}/obfuscation.map.json" || {
-          echo "ERROR: ${dir}/obfuscation.map.json is not valid JSON (racy gen_snapshot write?)." >&2
+          echo "ERROR: ${dir}/obfuscation.map.json is not valid non-empty JSON (racy gen_snapshot write, or gen_snapshot emitted no mappings?)." >&2
           exit 1
         }
       '';
